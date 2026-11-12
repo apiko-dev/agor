@@ -14,21 +14,9 @@
  * The scheduler re-checks the creator's Manager access at every fire.
  */
 
-import { materializeAgenticToolConfiguration } from '@agor/agentic-tools/config';
-import {
-  AgenticConfigurationResolutionError,
-  InvalidScheduleAgenticToolConfigError,
-  normalizeScheduleAgenticToolConfig,
-  PAGINATION,
-} from '@agor/core/config';
-import {
-  MCPServerRepository,
-  ScheduleRepository,
-  type TenantScopeAwareDatabase,
-} from '@agor/core/db';
-import { BadRequest, Forbidden } from '@agor/core/feathers';
-import { isMCPServerUsableBy } from '@agor/core/mcp';
-import { isInvalidModelConfigError } from '@agor/core/models';
+import { PAGINATION } from '@agor/core/config';
+import { ScheduleRepository, type TenantScopeAwareDatabase } from '@agor/core/db';
+import { BadRequest } from '@agor/core/feathers';
 import type {
   AuthenticatedParams,
   BranchID,
@@ -44,9 +32,10 @@ import type {
 import { SCHEDULE_CREATE_WRITE_FIELDS, SCHEDULE_PATCH_WRITE_FIELDS } from '@agor/core/types';
 import { DrizzleService } from '../adapters/drizzle';
 import {
-  materializedAgenticToolConfigurationToScheduleConfig,
-  scheduleAgenticToolConfigToSource,
-} from '../utils/agentic-configuration-sources.js';
+  normalizeUnattendedRunConfig,
+  validateUnattendedRunConfig,
+  validateUnattendedRunMcpServers,
+} from '../utils/unattended-run-config-validation.js';
 import { assertServiceWriteFields, pickWriteFields } from '../utils/write-data-boundary.js';
 
 /**
@@ -101,48 +90,16 @@ export class SchedulesService extends DrizzleService<
     this.db = db;
   }
 
-  private async validateConfig(
-    config: ScheduleAgenticToolConfig,
-    userId?: UserID
-  ): Promise<PersistedScheduleAgenticToolConfig> {
-    try {
-      const materialized = await materializeAgenticToolConfiguration(this.db, {
-        tool: config.agentic_tool,
-        source: scheduleAgenticToolConfigToSource(config),
-        executionOwnerId: userId,
-      });
-      return materializedAgenticToolConfigurationToScheduleConfig(config, materialized);
-    } catch (error) {
-      if (error instanceof AgenticConfigurationResolutionError) {
-        throw new BadRequest('Selected agentic configuration is not available');
-      }
-      if (isInvalidModelConfigError(error)) throw new BadRequest(error.message);
-      throw error;
-    }
+  private validateConfig(config: ScheduleAgenticToolConfig, userId?: UserID) {
+    return validateUnattendedRunConfig(this.db, config, userId);
   }
 
-  /** Runs attach servers as the creator: reject unusable ones on save; missing ones are skipped at run time. */
-  private async validateMcpServers(serverIds: string[], runAsUserId?: UserID): Promise<void> {
-    const repo = new MCPServerRepository(this.db);
-    for (const serverId of serverIds) {
-      const server = await repo.getWriteAuthorityProjection(serverId);
-      if (server && !isMCPServerUsableBy(server, runAsUserId)) {
-        throw new Forbidden(
-          `MCP server ${serverId} is private to another user. Schedules run as their creator, so only shared servers or servers the creator owns can be attached.`
-        );
-      }
-    }
+  private validateMcpServers(serverIds: string[], runAsUserId?: UserID) {
+    return validateUnattendedRunMcpServers(this.db, serverIds, runAsUserId, 'Schedules');
   }
 
-  private normalizeConfig(config: PersistedScheduleAgenticToolConfig): ScheduleAgenticToolConfig {
-    try {
-      return normalizeScheduleAgenticToolConfig(config);
-    } catch (error) {
-      if (error instanceof InvalidScheduleAgenticToolConfigError) {
-        throw new BadRequest(error.message);
-      }
-      throw error;
-    }
+  private normalizeConfig(config: PersistedScheduleAgenticToolConfig) {
+    return normalizeUnattendedRunConfig(config);
   }
 
   async create(data: ScheduleCreateData, params?: ScheduleParams) {

@@ -12,6 +12,9 @@ import {
   MCP_OAUTH_RELAY,
   OWNERSHIP_TRANSFER_SERVICES,
   PRODUCT_ANALYTICS_SERVICE,
+  TEAMMATE_WEBHOOK_DELIVERIES_SERVICE,
+  TEAMMATE_WEBHOOK_TOKEN_SERVICE,
+  TEAMMATE_WEBHOOKS_SERVICE,
 } from '@agor/core/types';
 import { describe, expect, it } from 'vitest';
 import {
@@ -176,6 +179,15 @@ describe('source scan: every registered path is declared', () => {
         JSON.stringify(BRANCH_WORKSPACE_NOTIFICATION_DISMISS_SERVICE)
       )
       .replace(/\bKNOWLEDGE_TRANSFER\.path\b/g, JSON.stringify(KNOWLEDGE_TRANSFER.path))
+      .replace(/\bTEAMMATE_WEBHOOKS_SERVICE\b/g, JSON.stringify(TEAMMATE_WEBHOOKS_SERVICE))
+      .replace(
+        /\bTEAMMATE_WEBHOOK_TOKEN_SERVICE\b/g,
+        JSON.stringify(TEAMMATE_WEBHOOK_TOKEN_SERVICE)
+      )
+      .replace(
+        /\bTEAMMATE_WEBHOOK_DELIVERIES_SERVICE\b/g,
+        JSON.stringify(TEAMMATE_WEBHOOK_DELIVERIES_SERVICE)
+      )
       .split('\n');
     const found: Array<{ path: string; line: number }> = [];
     lines.forEach((line, index) => {

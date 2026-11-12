@@ -7,6 +7,9 @@ import {
   MCP_OAUTH_RELAY,
   OWNERSHIP_TRANSFER_SERVICES,
   PRODUCT_ANALYTICS_SERVICE,
+  TEAMMATE_WEBHOOK_DELIVERIES_SERVICE,
+  TEAMMATE_WEBHOOK_TOKEN_SERVICE,
+  TEAMMATE_WEBHOOKS_SERVICE,
   type UserRole,
 } from '@agor/core/types';
 
@@ -142,6 +145,18 @@ export const REALTIME_PUBLISH_POLICY = {
   schedules: {
     audience: 'branch',
     why: 'BranchModal ScheduleTab lists schedules live.',
+  },
+  [TEAMMATE_WEBHOOKS_SERVICE]: {
+    audience: 'branch',
+    why: 'BranchModal WebhookTab lists webhooks live. Rows never carry the token or its hash.',
+  },
+  [TEAMMATE_WEBHOOK_TOKEN_SERVICE]: {
+    audience: 'none',
+    why: 'Returns a freshly minted plaintext secret to the caller only; the row change lands as a token-free teammate-webhooks.patched.',
+  },
+  [TEAMMATE_WEBHOOK_DELIVERIES_SERVICE]: {
+    audience: 'branch',
+    why: 'The webhook deliveries drawer tracks delivery status live. Rows never carry the payload.',
   },
   'branches/:id/permissions': {
     audience: 'none',

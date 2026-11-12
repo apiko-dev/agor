@@ -43,6 +43,8 @@ import {
   type SessionRepository,
   shortId,
   TaskRepository,
+  TeammateWebhookDeliveryRepository,
+  TeammateWebhookRepository,
   type TenantScopeAwareDatabase,
   TenantWriteGateActiveError,
   type UsersRepository,
@@ -117,6 +119,11 @@ import {
   SCHEDULE_CREATE_WRITE_FIELDS,
   SCHEDULE_PATCH_WRITE_FIELDS,
   TaskStatus,
+  TEAMMATE_WEBHOOK_CREATE_WRITE_FIELDS,
+  TEAMMATE_WEBHOOK_DELIVERIES_SERVICE,
+  TEAMMATE_WEBHOOK_PATCH_WRITE_FIELDS,
+  TEAMMATE_WEBHOOK_TOKEN_SERVICE,
+  TEAMMATE_WEBHOOKS_SERVICE,
 } from '@agor/core/types';
 import {
   isTaskScopedExecutorRequest,
@@ -243,6 +250,12 @@ import {
   isTerminalQueueProcessingSuppressed,
   sessionCanStartTask,
 } from './utils/session-task-state.js';
+import {
+  ensureTeammateWebhookRunsAsCaller,
+  loadTeammateWebhookAndBranch,
+  loadTeammateWebhookDeliveryScope,
+  scopeTeammateWebhookQuery,
+} from './utils/teammate-webhook-hooks.js';
 import { createTenantScopedAuthenticatedRouteRegistrar } from './utils/tenant-authenticated-route.js';
 import {
   createTenantDatabaseScopeAroundHook,
@@ -532,6 +545,9 @@ export const TENANT_OWNED_SERVICE_PATHS = [
   'repos',
   'branches',
   'schedules',
+  TEAMMATE_WEBHOOKS_SERVICE,
+  TEAMMATE_WEBHOOK_TOKEN_SERVICE,
+  TEAMMATE_WEBHOOK_DELIVERIES_SERVICE,
   'users',
   ...AUTHENTICATED_RBAC_SERVICE_PATHS,
   'app-variables',
@@ -3630,6 +3646,84 @@ export function registerHooks(ctx: RegisterHooksContext): void {
         requireMinimumRole(ROLES.MEMBER, 'delete schedules'),
         loadScheduleAndBranch(scheduleRepository, branchRepository),
         ensureBranchPermission('all', 'delete schedule', superadminOpts),
+      ],
+    },
+  });
+
+  // ============================================================================
+  // Teammate webhooks hooks
+  // ============================================================================
+  // A webhook starts unattended runs as its creator, so writes need branch
+  // Manager ('all'), and only the creator may edit it or mint its token. The
+  // services are optional so partial test apps can register hooks without them.
+
+  const teammateWebhookRepository = new TeammateWebhookRepository(db);
+  const noSuperadmin = { allowSuperadmin: false };
+  safeService(TEAMMATE_WEBHOOKS_SERVICE)?.hooks({
+    before: {
+      all: [requireAuth],
+      find: [scopeTeammateWebhookQuery(teammateWebhookRepository, superadminOpts)],
+      get: [
+        loadTeammateWebhookAndBranch(teammateWebhookRepository, branchRepository),
+        ensureCanView(superadminOpts),
+      ],
+      create: [
+        requireMinimumRole(ROLES.MEMBER, 'create teammate webhooks'),
+        loadBranch(branchRepository, 'branch_id'),
+        // No superadmin bypass: the run executes as the caller, who must really be a Manager.
+        ensureBranchPermission('all', 'create webhooks on this teammate', noSuperadmin),
+        enforcePublicWriteFields('TeammateWebhook', TEAMMATE_WEBHOOK_CREATE_WRITE_FIELDS),
+        injectCreatedBy(),
+        markWriteDataPrepared(),
+      ],
+      patch: [
+        requireMinimumRole(ROLES.MEMBER, 'update teammate webhooks'),
+        loadTeammateWebhookAndBranch(teammateWebhookRepository, branchRepository),
+        ensureBranchPermission('all', 'modify webhooks on this teammate', noSuperadmin),
+        enforcePublicWriteFields('TeammateWebhook', TEAMMATE_WEBHOOK_PATCH_WRITE_FIELDS),
+        ensureTeammateWebhookRunsAsCaller(),
+      ],
+      remove: [
+        requireMinimumRole(ROLES.MEMBER, 'delete teammate webhooks'),
+        loadTeammateWebhookAndBranch(teammateWebhookRepository, branchRepository),
+        ensureBranchPermission('all', 'delete webhooks on this teammate', superadminOpts),
+      ],
+    },
+  });
+
+  safeService(TEAMMATE_WEBHOOK_TOKEN_SERVICE)?.hooks({
+    before: {
+      create: [
+        requireAuth,
+        requireMinimumRole(ROLES.MEMBER, 'issue teammate webhook tokens'),
+        loadTeammateWebhookAndBranch(teammateWebhookRepository, branchRepository),
+        ensureTeammateWebhookRunsAsCaller(),
+        ensureBranchPermission('all', 'issue webhook tokens on this teammate', noSuperadmin),
+      ],
+    },
+    after: {
+      // The result is a plaintext secret: emit no service event at all, so no
+      // in-process listener, publisher, or relay ever sees it. The row change
+      // is published by the service as a token-free teammate-webhooks.patched.
+      create: [
+        (context: HookContext) => {
+          context.event = null;
+          return context;
+        },
+      ],
+    },
+  });
+
+  safeService(TEAMMATE_WEBHOOK_DELIVERIES_SERVICE)?.hooks({
+    before: {
+      all: [
+        requireAuth,
+        loadTeammateWebhookDeliveryScope(
+          teammateWebhookRepository,
+          new TeammateWebhookDeliveryRepository(db),
+          branchRepository
+        ),
+        ensureCanView(superadminOpts),
       ],
     },
   });
