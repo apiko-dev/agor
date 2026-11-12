@@ -47,7 +47,7 @@ import {
 } from '@agor/core/coordination';
 import type { TenantScopeAwareDatabase } from '@agor/core/db';
 import {
-  BranchRepository,
+  type BranchRepository,
   bindRepositoryToTenantUnitOfWork,
   EntityNotFoundError,
   generateId,
@@ -58,10 +58,9 @@ import {
   runWithTenantContext,
   runWithTenantDatabaseScope,
   ScheduleRepository,
-  SessionMCPServerRepository,
   SessionRepository,
   TaskRepository,
-  UsersRepository,
+  type UsersRepository,
 } from '@agor/core/db';
 import { type BadRequest, Forbidden } from '@agor/core/feathers';
 import type {
@@ -108,6 +107,7 @@ import {
 import {
   admitUnattendedSessionRow,
   attachUnattendedMcpServers,
+  createUnattendedRunDeps,
   dispatchUnattendedPrompt,
   prepareUnattendedRun,
   resolveUnattendedAgenticToolConfig,
@@ -389,24 +389,19 @@ export class SchedulerService {
     // repository calls unchanged, including their concurrency timing.
     const bindTenantRepository = <T extends object>(repository: T): T =>
       isPostgresDatabaseHandle(db) ? bindRepositoryToTenantUnitOfWork(db, repository) : repository;
-    this.branchRepo = bindTenantRepository(new BranchRepository(db));
-    this.scheduleRepo = bindTenantRepository(new ScheduleRepository(db));
-    this.sessionRepo = bindTenantRepository(new SessionRepository(db));
-    this.userRepo = bindTenantRepository(new UsersRepository(db));
-    this.taskRepo = bindTenantRepository(new TaskRepository(db));
-    this.runDeps = {
-      app,
-      db,
-      branchRepo: this.branchRepo,
-      userRepo: this.userRepo,
-      sessionMCPRepo: bindTenantRepository(new SessionMCPServerRepository(db)),
+    this.runDeps = createUnattendedRunDeps(db, app, {
       unixUserMode: this.config.unixUserMode,
       sdkHomeMode: this.config.sdkHomeMode,
       deploymentPolicy: this.config.deploymentPolicy,
       deploymentToolUnsupported: this.config.deploymentToolUnsupported,
       hostedOpenCode: this.config.hostedOpenCode,
       secureLocalCredentialOverlay: this.config.secureLocalCredentialOverlay,
-    };
+    });
+    this.branchRepo = this.runDeps.branchRepo;
+    this.userRepo = this.runDeps.userRepo;
+    this.scheduleRepo = bindTenantRepository(new ScheduleRepository(db));
+    this.sessionRepo = bindTenantRepository(new SessionRepository(db));
+    this.taskRepo = bindTenantRepository(new TaskRepository(db));
 
     if (
       !Number.isInteger(this.config.scanBatchSize) ||

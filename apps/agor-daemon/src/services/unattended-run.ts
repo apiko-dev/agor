@@ -24,13 +24,17 @@ import {
   normalizePersistedScheduleAgenticToolConfig,
   unixUserModeRequiresExecutionHomeKey,
 } from '@agor/core/config';
-import type {
+import {
   BranchRepository,
+  bindRepositoryToTenantUnitOfWork,
+  EntityNotFoundError,
+  getCurrentTenantId,
+  isPostgresDatabaseHandle,
+  runWithTenantDatabaseScope,
   SessionMCPServerRepository,
-  TenantScopeAwareDatabase,
+  type TenantScopeAwareDatabase,
   UsersRepository,
 } from '@agor/core/db';
-import { EntityNotFoundError, getCurrentTenantId, runWithTenantDatabaseScope } from '@agor/core/db';
 import { BadRequest } from '@agor/core/feathers';
 import type {
   AgenticToolName,
@@ -74,6 +78,39 @@ export interface UnattendedRunDeps {
   deploymentToolUnsupported: (tool: AgenticToolName) => BadRequest | undefined;
   hostedOpenCode: boolean;
   secureLocalCredentialOverlay: boolean;
+}
+
+/** Deployment configuration every unattended trigger shares; captured once at startup. */
+export type UnattendedRunConfig = Pick<
+  UnattendedRunDeps,
+  | 'unixUserMode'
+  | 'sdkHomeMode'
+  | 'deploymentPolicy'
+  | 'deploymentToolUnsupported'
+  | 'hostedOpenCode'
+  | 'secureLocalCredentialOverlay'
+>;
+
+/**
+ * PostgreSQL repositories are bound at the short-unit boundary so reads stay
+ * available during a tenant freeze while every write checks the gate. SQLite
+ * has no write gate; its direct calls keep their concurrency timing.
+ */
+export function createUnattendedRunDeps(
+  db: TenantScopeAwareDatabase,
+  app: Application,
+  config: UnattendedRunConfig
+): UnattendedRunDeps {
+  const bind = <T extends object>(repository: T): T =>
+    isPostgresDatabaseHandle(db) ? bindRepositoryToTenantUnitOfWork(db, repository) : repository;
+  return {
+    app,
+    db,
+    branchRepo: bind(new BranchRepository(db)),
+    userRepo: bind(new UsersRepository(db)),
+    sessionMCPRepo: bind(new SessionMCPServerRepository(db)),
+    ...config,
+  };
 }
 
 export type UnattendedRunRejection =

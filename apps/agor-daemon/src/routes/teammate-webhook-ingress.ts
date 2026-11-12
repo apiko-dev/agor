@@ -19,6 +19,7 @@ import {
   bindRepositoryToTenantUnitOfWork,
   runWithoutTenantContext,
   runWithSystemDatabaseScope,
+  runWithTenantContext,
   TeammateWebhookDeliveryRepository,
   TeammateWebhookRepository,
   type TenantScopeAwareDatabase,
@@ -27,6 +28,7 @@ import type { Application } from '@agor/core/feathers';
 import { isValidUUID } from '@agor/core/ids';
 import {
   isTeammate,
+  TEAMMATE_WEBHOOK_DELIVERIES_SERVICE,
   TEAMMATE_WEBHOOK_IDEMPOTENCY_HEADERS,
   TEAMMATE_WEBHOOK_INGRESS_PREFIX,
   TEAMMATE_WEBHOOK_LIMITS,
@@ -34,6 +36,7 @@ import {
 } from '@agor/core/types';
 import type { NextFunction, Request, Response } from 'express';
 import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
+import { emitServiceEvent } from '../utils/emit-service-event.js';
 import { structuredLogErrorCode } from '../utils/structured-log.js';
 
 const LOG_PREFIX = '[teammate-webhooks.ingress]';
@@ -245,6 +248,19 @@ export function registerTeammateWebhookIngressRoute(input: {
       duplicate: outcome.outcome === 'duplicate',
     });
     if (outcome.outcome === 'admitted') {
+      const delivery = outcome.delivery;
+      try {
+        runWithTenantContext(tenantId, () =>
+          emitServiceEvent(input.app, {
+            path: TEAMMATE_WEBHOOK_DELIVERIES_SERVICE,
+            event: 'created',
+            data: delivery,
+            id: delivery.delivery_id,
+          })
+        );
+      } catch (error) {
+        console.warn(`${LOG_PREFIX} event=publish_failed code=${structuredLogErrorCode(error)}`);
+      }
       try {
         wakeWorker();
       } catch {
