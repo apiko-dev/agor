@@ -586,6 +586,7 @@ export const ZoneConfigModal = ({
           <Form.Item
             label="Agent"
             help="Anything you leave unset uses the dropping user's default for this agent."
+            style={{ marginBottom: 16 }}
           >
             <AgentSelectionGrid
               agents={AVAILABLE_AGENTS}
