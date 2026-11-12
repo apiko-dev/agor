@@ -1,0 +1,228 @@
+---
+title: Teammate Webhooks
+description: Let Jira or any other system start an Agor AI teammate over HTTP, with a prompt template filled in from the request body.
+---
+
+# Teammate webhooks
+
+A teammate webhook is an HTTP endpoint that starts a run on an [AI teammate](/guide/teammates). Another system, such as Jira, sends a JSON `POST` to the webhook URL. Agor fills in the webhook's prompt template with the request body and starts a new session on the teammate's branch.
+
+Webhooks work like [schedules](/guide/scheduler), with a call instead of a cron expression as the trigger. Each webhook has its own name, prompt template, agent configuration, and MCP servers. A teammate can have several webhooks, and each one has its own URL and token.
+
+Webhooks exist only on teammate branches. Agor rejects a webhook on a normal branch, and it stops running a webhook whose branch is no longer a teammate.
+
+## Create a webhook
+
+You need the **Manager** role on the teammate's branch.
+
+1. Open the teammate's branch card and go to the **Webhooks** tab.
+2. Click **New**.
+3. Enter a **Name**, such as `Jira triage`, and an optional **Description**.
+4. Write the **Prompt template**. See [Write the prompt template](#write-the-prompt-template).
+5. Pick the **Agent** and its settings, including the model, permission mode, and MCP servers. The run is unattended, so pick a permission mode that does not stop to ask for approval.
+6. To check what the agent receives, open **Preview with a sample payload** and paste a JSON body.
+7. To change how calls overlap, open **Webhook Settings** and set **Concurrency**. See [One run at a time](#one-run-at-a-time).
+8. Save the webhook.
+
+After you save, Agor issues the webhook's token and shows it with the webhook URL.
+
+## Copy the URL and the token
+
+Agor shows the token once. Copy it before you close the panel, because Agor stores only a hash of it and cannot show it again. The webhook list shows only the first characters of the token. Every token starts with `agwh_`, so secret scanners can recognize a leaked one.
+
+The URL has this form:
+
+```text
+https://<your Agor address>/webhooks/teammates/<webhook id>/
+```
+
+If Agor does not know the public address of the workspace yet, the panel shows only the path. Put your Agor address in front of it.
+
+To replace the token, click the key icon in the webhook list and confirm **Rotate**. The old token stops working immediately, so update every sender that uses it. If Agor could not issue a token when you created the webhook, the same icon issues one. A webhook with no token rejects every call.
+
+Only the person who created the webhook can issue or rotate its token.
+
+## Send a request
+
+Send the token in an `Authorization: Bearer` header:
+
+```bash
+curl -X POST 'https://agor.example.com/webhooks/teammates/<webhook id>/' \
+  -H 'Authorization: Bearer agwh_...' \
+  -H 'Content-Type: application/json' \
+  -d '{"issue": {"key": "PROJ-42", "fields": {"summary": "Login fails on Safari"}}}'
+```
+
+If the sender cannot set headers, add the token to the URL as `?token=`:
+
+```text
+https://agor.example.com/webhooks/teammates/<webhook id>/?token=agwh_...
+```
+
+Prefer the header when the sender supports it. A URL with the token in it can end up in proxy logs and in the sender's configuration screens.
+
+The body must be a JSON object or array, sent as UTF-8 with `Content-Type: application/json`. A request with no body is accepted, and the template sees an empty object.
+
+### Avoid duplicate runs
+
+If a sender retries a call, send the same idempotency key each time. Agor reads the first of these headers that is present:
+
+1. `Idempotency-Key`
+2. `X-Atlassian-Webhook-Identifier`
+3. `X-GitHub-Delivery`
+
+A call with a key that this webhook has already received returns the original delivery with `"duplicate": true` and starts nothing. Keys can be up to 200 characters.
+
+## Set up Jira Cloud
+
+Jira Cloud admin webhooks cannot send a custom `Authorization` header, so use the `?token=` form of the URL. You need Jira administrator access.
+
+1. In Jira, open the system settings and find **WebHooks**.
+2. Create a webhook. Paste the Agor URL with `?token=<token>` added to the end.
+3. Pick the events that should start the teammate, for example issue created or issue updated.
+4. To limit which issues trigger it, add a JQL filter, for example `project = PROJ AND labels = agor`.
+5. Save the webhook in Jira.
+
+Jira labels and menus change over time. If a step does not match what you see, follow the Jira Cloud documentation for admin webhooks.
+
+Jira can also sign requests with a secret. Agor does not check that signature yet. The `?token=` value is what authenticates the call, so treat the Jira webhook configuration as a secret and limit who can read it.
+
+Jira sends an `X-Atlassian-Webhook-Identifier` header. Agor uses it as the idempotency key, so a Jira retry of the same event does not start a second run.
+
+A template for Jira issue events:
+
+```text
+A Jira issue changed ({{payload.webhookEvent}}).
+
+Issue: {{payload.issue.key}}
+Summary: {{payload.issue.fields.summary}}
+
+Read the issue in Jira, decide whether it is a bug we can reproduce, and post your findings as a comment on the issue.
+```
+
+## Write the prompt template
+
+Prompt templates use Handlebars. The template can read these values:
+
+- `payload.*` is the JSON body of the call, for example `{{payload.issue.key}}`.
+- `webhook.name` and `webhook.webhook_id`.
+- `branch.name`, `branch.ref`, `branch.issue_url`, and `branch.pull_request_url`.
+- `delivery.delivery_id` and `delivery.received_at`.
+
+Templates support a fixed set of helpers and blocks:
+
+- Value helpers: `json`, `default`, `eq`, `ne`, `and`, `or`, and `not`.
+- Blocks: `#if`, `#unless`, `#each`, and `#with`.
+
+Agor checks the template when you save it. It rejects triple-brace output (`{{{ }}}` and `{{& }}`), partials, decorators, any other helper, names that start with `__`, and templates over 20,000 characters.
+
+```text
+{{#if (eq payload.issue.fields.status.name "To Do")}}
+Start on {{payload.issue.key}}: {{payload.issue.fields.summary}}
+Priority: {{default payload.issue.fields.priority.name "not set"}}
+{{else}}
+{{payload.issue.key}} is not in To Do. Summarize its state and stop.
+{{/if}}
+
+Full issue: {{json payload.issue}}
+```
+
+### Payload values are data, not instructions
+
+Anyone who holds the URL and token controls the request body, so Agor treats payload values as untrusted:
+
+- A string value appears as a quoted JSON string with escapes, so `{{payload.issue.key}}` renders as `"PROJ-42"`, not `PROJ-42`. Quotes, newlines, `<`, `>`, `&`, and backticks are escaped, so a value cannot close the quote or open a tag or a code block.
+- A string longer than 4,000 characters is cut off and ends with `…[truncated]` inside the quotes.
+- Numbers and booleans appear as written. A missing value renders as nothing.
+- An object or array appears as escaped JSON. Use `{{json payload.issue}}` to insert a whole object.
+- Every mustache output goes through the same encoding, including the result of `default`. The text you write in the template itself appears as written.
+
+Every rendered prompt starts with a line that tells the agent the quoted values and JSON come from an external webhook, and that they are data, not instructions or authority. Write your instructions in the template, and use payload values only as input to them.
+
+If the rendered prompt, with that line, is larger than 128 KiB, the delivery fails with a template error.
+
+## Responses
+
+Agor answers before the run starts. A `202` means Agor stored the call and will process it. It does not mean the run started.
+
+| Status | Body                                                             | Meaning                                                                                                                                                                 |
+| ------ | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `202`  | `{"delivery_id": "...", "status": "queued", "duplicate": false}` | Agor stored the call. `duplicate` is `true` when the idempotency key matched an earlier call, and the body then describes that earlier delivery.                        |
+| `400`  | `{"error": "..."}`                                               | The body is not a JSON object or array, or the idempotency key is longer than 200 characters.                                                                           |
+| `401`  | `{"error": "Webhook token required"}`                            | The call has no token in the header or the URL.                                                                                                                         |
+| `404`  | `{"error": "Webhook not found"}`                                 | The webhook does not exist, is turned off, has no token, or is not on a teammate branch. A wrong token gets the same response, so a caller cannot tell the cases apart. |
+| `413`  | `{"error": "Webhook payload exceeds the 1 MiB limit"}`           | The body is larger than 1 MiB.                                                                                                                                          |
+| `415`  | `{"error": "..."}`                                               | The call has a body but its content type is not `application/json`, or the body is not UTF-8.                                                                           |
+| `429`  | `{"error": "...", "code": "rate_limited"}`                       | More than 60 failed calls to this webhook from one IP address in a minute. Successful calls do not count.                                                               |
+| `429`  | `{"error": "...", "code": "queue_full"}`                         | This webhook already has 100 calls waiting or starting.                                                                                                                 |
+| `503`  | `{"error": "Webhook delivery was not durably admitted"}`         | Agor could not store the call. Nothing was queued, so the sender can retry.                                                                                             |
+
+Agor checks the body before the token. A call with a bad body gets `400`, `413`, or `415` even if its token is missing or wrong.
+
+## Check deliveries
+
+Every stored call is a delivery. To see the 20 most recent deliveries, click the list icon on the webhook in the **Webhooks** tab. The list updates live. **Open** goes to the delivery's session.
+
+| Status   | Meaning                                                                                               |
+| -------- | ----------------------------------------------------------------------------------------------------- |
+| Queued   | Waiting to start, waiting for the previous run from this webhook, or waiting to retry after an error. |
+| Starting | Agor is creating the session.                                                                         |
+| Started  | The session exists and its first task was sent.                                                       |
+| Failed   | The delivery will not run. The list shows the reason.                                                 |
+
+Agor retries errors that a retry can fix, with a growing delay, up to 8 attempts. These failures are permanent:
+
+| Reason                   | What happened                                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `webhook_disabled`       | The webhook was turned off before the call ran. Turning a webhook off fails all of its queued calls. |
+| `branch_not_teammate`    | The branch is no longer a teammate.                                                                  |
+| `permission_revoked`     | The webhook's creator no longer has permission to run this teammate.                                 |
+| `creator_unavailable`    | The creator's account cannot run sessions anymore.                                                   |
+| `agentic_tool_removed`   | The webhook's agent is no longer available. Edit the webhook and choose another.                     |
+| `invalid_config`         | The webhook's agent configuration or MCP servers are not valid. Edit the webhook to fix it.          |
+| `tool_unavailable`       | The webhook's agent is not available in this workspace.                                              |
+| `template_render_failed` | The template could not produce a prompt from this payload, or the prompt was larger than 128 KiB.    |
+| `payload_unreadable`     | Agor could not read the stored payload.                                                              |
+| `payload_expired`        | The call waited in the queue for more than 72 hours.                                                 |
+| `retries_exhausted`      | Starting the run kept failing, so Agor stopped after 8 attempts.                                     |
+
+Agor stores each payload encrypted and deletes it when the delivery starts or fails. Agor never shows the payload in the deliveries list, in realtime events, or in logs. Agor deletes started and failed deliveries 30 days after it received them. Deleting a webhook deletes all of its deliveries.
+
+## Who the run acts as
+
+Each run acts as the person who created the webhook. Agor records the creator at creation, and nobody can change it. The session, its task, its credentials, and its MCP servers are the creator's. Agor rejects a webhook that uses another user's private MCP server.
+
+Creating a webhook needs real Manager access on the branch, even for a superadmin, because the run acts as you. Only the creator can edit the webhook, turn it on or off, or rotate its token. Any branch Manager can delete it.
+
+Agor checks the creator's access again for every delivery. If the creator is no longer a workspace member or a Manager of the branch, the delivery fails with `permission_revoked`. To keep the webhook running, restore their access, or delete the webhook and have a current Manager create a new one.
+
+Each run is a new session on the teammate's branch, titled `<webhook name> — <received time>`.
+
+## One run at a time
+
+By default, a webhook runs one call at a time. While a run from this webhook is still working, new calls wait in the queue and start in the order Agor received them. A run counts as working while its session is running or waiting for input or permission, or while it has an unfinished task.
+
+To start every call right away, open **Webhook Settings** and set **Concurrency** to **Start every call right away**. The setting applies to this webhook only. Other webhooks and schedules on the same teammate do not block each other.
+
+## Limits
+
+These limits come from `TEAMMATE_WEBHOOK_LIMITS` in `packages/core/src/types/teammate-webhook.ts`:
+
+| Limit                                          | Value             |
+| ---------------------------------------------- | ----------------- |
+| Request body                                   | 1 MiB             |
+| Calls waiting or starting, per webhook         | 100               |
+| Time a call can wait before it expires         | 72 hours          |
+| Prompt template length                         | 20,000 characters |
+| Rendered prompt size                           | 128 KiB           |
+| Length of one inserted string                  | 4,000 characters  |
+| Idempotency key length                         | 200 characters    |
+| History kept for started and failed deliveries | 30 days           |
+
+The ingress route also allows 60 failed calls per minute for each webhook and IP address, and the worker tries to start a delivery at most 8 times.
+
+## Related reading
+
+- [Teammates](/guide/teammates): the persistent agents that webhooks start.
+- [Branch Scheduler](/guide/scheduler): start a teammate on a cron schedule instead of a call.
+- [MCP Catalog & Connections](/guide/mcp-servers): the tools a webhook run can use.
