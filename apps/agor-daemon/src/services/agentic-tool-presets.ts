@@ -4,6 +4,7 @@ import {
   GatewayChannelRepository,
   ScheduleRepository,
   SessionRepository,
+  TeammateWebhookRepository,
   TenantAgenticToolSettingsRepository,
   type TenantScopeAwareDatabase,
   UsersRepository,
@@ -165,15 +166,17 @@ export class AgenticToolPresetsService {
         `Choose another default ${current.tool} preset before deleting this one`
       );
     }
-    const [sessions, schedules, channels, users] = await Promise.all([
+    const [sessions, schedules, webhooks, channels, users] = await Promise.all([
       new SessionRepository(this.db).findAll(),
       new ScheduleRepository(this.db).findAll(),
+      new TeammateWebhookRepository(this.db).findAll(),
       new GatewayChannelRepository(this.db).findAll(),
       new UsersRepository(this.db).findAll(),
     ]);
     const references =
       sessions.filter((session) => session.agentic_tool_preset_id === id).length +
       schedules.filter((schedule) => schedule.agentic_tool_config.preset_id === id).length +
+      webhooks.filter((webhook) => webhook.agentic_tool_config.preset_id === id).length +
       channels.filter((channel) => channel.agentic_config?.presetId === id).length +
       users.filter((user) =>
         Object.values(user.default_agentic_selection ?? {}).some(

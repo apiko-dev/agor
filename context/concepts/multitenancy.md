@@ -76,6 +76,7 @@ Reuse these instead of adding local tenant plumbing:
 | Service ownership and request hooks                                                                                        | `TENANT_OWNED_SERVICE_PATHS` and `TENANT_IDENTITY_ONLY_SERVICE_PATHS` in `apps/agor-daemon/src/register-hooks.ts`                                                      |
 | Registration-time scope classification (and its baseline)                                                                  | `apps/agor-daemon/src/utils/tenant-service-classification.ts`, asserted at boot from `index.ts`                                                                        |
 | Identity-only orchestration's database access                                                                              | `apps/agor-daemon/src/utils/tenant-bound-data-access.ts` (`createTenantBoundDataAccess`)                                                                               |
+| Narrow system RLS capabilities for cross-tenant discovery                                                                  | `SystemDatabaseCapability` in `packages/core/src/db/tenant-context.ts`, such as `teammate_webhook_ingress_discovery` and `teammate_webhook_delivery_discovery`         |
 | Request/deferred identity helpers                                                                                          | `apps/agor-daemon/src/utils/tenant-db-scope.ts`                                                                                                                        |
 | Queued session work                                                                                                        | `apps/agor-daemon/src/utils/session-queue-tenant-scope.ts`                                                                                                             |
 | MCP database work                                                                                                          | `apps/agor-daemon/src/mcp/tenant-scope.ts`                                                                                                                             |
@@ -153,7 +154,11 @@ instruments a query, so all of these pass today and are pinned as passing in
 - new code inside an already-classified service, or in a timer or sweep callback
   it starts;
 - Express handlers, which are not in `app.services` at all
-  (`app.post('/mcp-egress/:serverId', …)` is a live example);
+  (`app.post('/mcp-egress/:serverId', …)` is a live example, and so is the
+  teammate webhook ingress `POST /webhooks/teammates/:webhookId` in
+  `routes/teammate-webhook-ingress.ts`, which discovers the owning tenant under
+  the SELECT-only `teammate_webhook_ingress_discovery` capability and then
+  opens its own tenant units with `bindRepositoryToTenantUnitOfWork`);
 - anything registered after the one-time boot assertion.
 
 The facade is likewise not a capability sandbox: `read`/`write` hand the

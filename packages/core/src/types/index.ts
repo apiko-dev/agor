@@ -40,6 +40,7 @@ export * from './schedule';
 export type { ClaudeCodePermissionMode, CodexPermissionMode, PermissionMode } from './session';
 export * from './session';
 export * from './task';
+export * from './teammate-webhook';
 export * from './template';
 export * from './tenant';
 export * from './tenant-agentic-tool';

@@ -695,12 +695,18 @@ export async function setupQuery(
   };
   delete queryOptions.mcpServers;
   // The CLI handles a pending set before the next user message, so only these hold the first turn.
-  const blockingMcpServers: MCPServersConfig = Object.fromEntries(
-    Object.entries(startupMcpServers).filter(
-      ([name, config]) =>
-        name === AGOR_MCP_SERVER_NAME || (config as { alwaysLoad?: boolean }).alwaysLoad === true
-    )
-  );
+  // On resume the full set holds it: the CLI diffs the transcript's previous tool list against
+  // what is connected at the first request and announces any missing server as removed, so a
+  // single-call answer would lose them for the turn.
+  const blockingMcpServers: MCPServersConfig = queryOptions.resume
+    ? startupMcpServers
+    : Object.fromEntries(
+        Object.entries(startupMcpServers).filter(
+          ([name, config]) =>
+            name === AGOR_MCP_SERVER_NAME ||
+            (config as { alwaysLoad?: boolean }).alwaysLoad === true
+        )
+      );
   let refreshApplyTail: Promise<unknown> = Promise.resolve();
   const MCP_SET_SERVERS_TIMEOUT_MS = 15_000;
   // The SDK starts reading the prompt inside query(), before it returns the Query.
@@ -734,7 +740,7 @@ export async function setupQuery(
   };
 
   async function* asUserMessageIterable(text: string) {
-    // Connect Agor and alwaysLoad servers before the first message so the first turn
+    // Connect the blocking servers before the first message so the first turn
     // sees their tools. The SDK reads the prompt inside query(), so this is queued
     // before any refresh can be.
     const blockingApply = applyStartupMcpServers(blockingMcpServers);

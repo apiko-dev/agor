@@ -28,6 +28,8 @@ import { BranchRepository } from './repositories/branches';
 import { GatewayChannelRepository } from './repositories/gateway-channels';
 import { RepoRepository } from './repositories/repos';
 import { SessionRepository } from './repositories/sessions';
+import { TeammateWebhookDeliveryRepository } from './repositories/teammate-webhook-deliveries';
+import { TeammateWebhookRepository } from './repositories/teammate-webhooks';
 import { UserMCPOAuthTokenRepository } from './repositories/user-mcp-oauth-tokens';
 import { UsersRepository } from './repositories/users';
 import * as pg from './schema.postgres';
@@ -838,6 +840,7 @@ describe.skipIf(!postgresUrl || !usesPostgresSchema)('tenant portability (Postgr
       'github_install_states',
       'mcp_oauth_client_registrations',
       'mcp_oauth_pending_flows',
+      'teammate_webhook_deliveries',
       'teams_conversation_addresses',
       'teams_message_deliveries',
       'user_mcp_oauth_tokens',
@@ -941,6 +944,55 @@ describe.skipIf(!postgresUrl || !usesPostgresSchema)('tenant portability (Postgr
       ).resolves.toBeNull();
     });
 
+    await deleteTenantData(db, rehomed);
+  });
+
+  it('re-homes teammate webhooks without their token and never moves deliveries', async () => {
+    const source = `tpwh-src-${generateId()}`;
+    const rehomed = `tpwh-dst-${generateId()}`;
+    const ownerId = await seedTenant(db, source);
+    const webhookId = await runWithTenantDatabaseScope(db, source, async (scoped) => {
+      const [branch] = await new BranchRepository(scoped).findAll();
+      const webhooks = new TeammateWebhookRepository(scoped);
+      const webhook = await webhooks.create({
+        branch_id: branch!.branch_id,
+        created_by: ownerId as unknown as UUID,
+        name: 'Portable webhook',
+        prompt: 'Handle {{payload.id}}',
+        agentic_tool_config: { agentic_tool: 'claude-code' },
+      });
+      await webhooks.setTokenHash(webhook.webhook_id, 'd'.repeat(64), 'agwh_dddd');
+      const admitted = await new TeammateWebhookDeliveryRepository(scoped).admit({
+        webhookId: webhook.webhook_id,
+        idempotencyKey: null,
+        payload: { id: 1 },
+        payloadBytes: 8,
+      });
+      expect(admitted.outcome).toBe('admitted');
+      return webhook.webhook_id;
+    });
+    const archive = join(scratch, `${source}-webhook-archive`);
+    await exportTenant(db, source, { archivePath: archive });
+    const manifest = await readManifest(archive);
+    expect(manifest.database.tables.map((table) => table.name)).toContain('teammate_webhooks');
+    expect(manifest.database.tables.map((table) => table.name)).not.toContain(
+      'teammate_webhook_deliveries'
+    );
+
+    await deleteTenantData(db, source);
+    await importTenant(db, { archivePath: archive, tenantId: rehomed });
+    await runWithTenantDatabaseScope(db, rehomed, async (scoped) => {
+      const webhooks = new TeammateWebhookRepository(scoped);
+      expect(await webhooks.findIngressCredential(webhookId)).toMatchObject({ token_hash: null });
+      expect(await webhooks.findById(webhookId)).toMatchObject({
+        name: 'Portable webhook',
+        token_hint: null,
+        token_issued_at: null,
+      });
+      expect(
+        (await new TeammateWebhookDeliveryRepository(scoped).findByWebhook(webhookId)).total
+      ).toBe(0);
+    });
     await deleteTenantData(db, rehomed);
   });
 

@@ -3,5 +3,7 @@ export {
   completionCallbackTaskId,
   gatewayInboundSessionId,
   gatewayInboundTaskId,
+  teammateWebhookSessionId,
+  teammateWebhookTaskId,
   widgetAutoResumeTaskId,
 } from '@agor/core/ids';

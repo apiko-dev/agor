@@ -62,9 +62,11 @@ import { KnowledgeEmbeddingIndexer } from './services/knowledge-embedding-indexe
 import { SchedulerService } from './services/scheduler.js';
 import { SessionQueueWorker } from './services/session-queue-worker.js';
 import { TaskRuntimeReconciler } from './services/task-runtime-reconciler.js';
+import { TeammateWebhookWorker } from './services/teammate-webhook-worker.js';
 import { TeamsGatewayWorker } from './services/teams-gateway-worker.js';
 import { TeamsMessageDeliveryWorker } from './services/teams-message-delivery-worker.js';
 import type { TerminalsService } from './services/terminals.js';
+import type { UnattendedRunConfig } from './services/unattended-run.js';
 import { appendSystemMessage } from './utils/append-system-message.js';
 import { scrubManagedGitRemoteCredentials } from './utils/git-remote-credential-scan.js';
 import {
@@ -871,15 +873,20 @@ export async function startup(ctx: StartupContext): Promise<void> {
 
   // 7. Start scheduler service (background worker)
   const schedulerMultiTenancy = resolveMultiTenancyConfig(config);
-  const schedulerService = new SchedulerService(db, app, {
+  // Schedules and teammate webhooks start unattended runs through one launcher
+  // with one deployment configuration.
+  const unattendedRunConfig: UnattendedRunConfig = {
     deploymentPolicy: resolveDeploymentAgenticToolPolicy(config),
     deploymentToolUnsupported: createDeploymentToolUnsupportedGate(config),
-    tickInterval: 30000, // 30 seconds
-    gracePeriod: 120000, // 2 minutes
     unixUserMode: config.execution?.unix_user_mode ?? 'simple',
     sdkHomeMode: resolveSdkHomeConfig(config).mode,
     secureLocalCredentialOverlay: hasSecureLocalCredentialOverlay(config),
     hostedOpenCode: isHostedOpenCode(config),
+  };
+  const schedulerService = new SchedulerService(db, app, {
+    ...unattendedRunConfig,
+    tickInterval: 30000, // 30 seconds
+    gracePeriod: 120000, // 2 minutes
     // Static mode keeps the historical single-tenant scope. Auth-resolved
     // multi-tenant mode leaves this undefined so the scheduler discovers due
     // schedule tenant metadata at the DB boundary on each tick.
@@ -948,6 +955,15 @@ export async function startup(ctx: StartupContext): Promise<void> {
   teamsGatewayWorker.start();
   console.log('📨 Teams gateway HA worker started');
 
+  const teammateWebhookWorker = new TeammateWebhookWorker(db, app, {
+    runConfig: unattendedRunConfig,
+    tenantId:
+      startupMultiTenancy.mode === 'static' ? startupMultiTenancy.static_tenant_id : undefined,
+  });
+  app.set('teammateWebhookWorker', teammateWebhookWorker);
+  teammateWebhookWorker.start();
+  console.log('🪝 Teammate webhook worker started');
+
   // 11. Graceful shutdown handler
   let shutdownStarted = false;
   const shutdown = async (signal: string) => {
@@ -1009,6 +1025,8 @@ export async function startup(ctx: StartupContext): Promise<void> {
       await teamsMessageDeliveryWorker.stop();
       console.log('📨 Stopping Teams gateway HA worker...');
       await teamsGatewayWorker.stop();
+      console.log('🪝 Stopping teammate webhook worker...');
+      await teammateWebhookWorker.stop();
 
       if (gatewayService) {
         console.log('🌐 Stopping gateway listeners...');

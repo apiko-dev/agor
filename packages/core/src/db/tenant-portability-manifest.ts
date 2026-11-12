@@ -51,7 +51,18 @@ export const NON_PORTABLE_TENANT_TABLES: ReadonlySet<string> = new Set([
   // Import must not replay effects or revive ciphertext under a different tenant.
   'teams_conversation_addresses',
   'teams_message_deliveries',
+  // Deployment-encrypted webhook payloads; restoring a delivery would replay its run.
+  'teammate_webhook_deliveries',
 ]);
+
+/**
+ * Webhook bearer-token columns an import must clear. A restored token hash would
+ * keep the source deployment's secret valid at a new URL, so every imported
+ * webhook needs its token issued again.
+ */
+export const TENANT_IMPORT_CLEARED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  teammate_webhooks: ['token_hash', 'token_hint', 'token_issued_at'],
+};
 
 /** Queued Teams activities are encrypted for this deployment; restoring one would replay it. */
 export const TENANT_IN_FLIGHT_PAYLOAD_COLUMN = {

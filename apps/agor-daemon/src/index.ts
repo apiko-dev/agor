@@ -103,6 +103,7 @@ import { startup } from './startup.js';
 import { resolveWebTerminalCapability } from './terminal-capability.js';
 import { configureResolvedConfigSlice } from './utils/build-resolved-config-slice.js';
 import { deepFreezeClone } from './utils/deep-freeze.js';
+import { verifyIngressBodyLimit } from './utils/ingress-body-limits.js';
 import { ensureOpenSourceTelemetryEnvEnabledConfig } from './utils/open-source-telemetry-config.js';
 import { shouldEmitOpenSourceTelemetryDaemonActive } from './utils/open-source-telemetry-heartbeat.js';
 import { startOpenSourceTelemetryUsageSummaryInterval } from './utils/open-source-telemetry-usage.js';
@@ -640,26 +641,10 @@ async function startDaemonWithOwnedMetrics(
       void handler(req, res);
     }) as never
   );
-  app.use(
-    express.json({
-      limit: '10mb',
-      verify: (req, _res, buffer) => {
-        // Teams callbacks have a much tighter provider-facing bound than the
-        // general API. Reject while parsing so an oversized body is never
-        // materialized into req.body before the ingress route can inspect it.
-        if (/^\/gateway\/teams\//i.test(req.url ?? '') && buffer.byteLength > 1_024 * 1_024) {
-          const error = new Error('Teams activity exceeds the 1 MiB limit') as Error & {
-            status?: number;
-            type?: string;
-          };
-          error.status = 413;
-          error.type = 'entity.too.large';
-          throw error;
-        }
-      },
-    })
-  );
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  // Provider ingress (Teams, teammate webhooks) has a much tighter bound than
+  // the general API; `verifyIngressBodyLimit` rejects while parsing.
+  app.use(express.json({ limit: '10mb', verify: verifyIngressBodyLimit }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb', verify: verifyIngressBodyLimit }));
 
   // --------------------------------------------------------------------------
   // Static file serving — serve the bundled UI when it exists alongside

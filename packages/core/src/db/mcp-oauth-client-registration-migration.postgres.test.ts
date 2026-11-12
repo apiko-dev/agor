@@ -401,6 +401,9 @@ describe.skipIf(!postgresUrl || !usesPostgresSchema)(
       await executeRaw(db, sql`DROP TABLE user_provider_oauth_grants`);
       // 0117 is newer than this watermark; replaying the chain must recreate it.
       await executeRaw(db, sql`DROP TABLE opencode_checkpoint_attempts`);
+      // Rewind 0121 (teammate webhooks) the same way.
+      await executeRaw(db, sql`DROP TABLE teammate_webhook_deliveries`);
+      await executeRaw(db, sql`DROP TABLE teammate_webhooks`);
       // Rewind 0118 (Teams gateway HA) the same way.
       await executeRaw(db, sql`DROP TABLE teams_message_deliveries`);
       await executeRaw(db, sql`DROP TABLE teams_conversation_addresses`);
