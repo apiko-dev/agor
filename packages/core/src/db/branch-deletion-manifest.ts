@@ -30,6 +30,21 @@ export const BRANCH_DELETION_RELATIONS: Readonly<Record<string, BranchDeletionRe
   ),
   'schedules.branch_id': owned('Fence production before deleting schedules.'),
   'schedules.last_run_session_id': clear('Preserve schedules owned by other branches.'),
+  'teammate_webhooks.branch_id': owned(
+    'Disable ingress before deleting webhook definitions and their token hashes.'
+  ),
+  'teammate_webhook_deliveries.branch_id': owned(
+    'Delete queued encrypted payloads and delivery history with the branch.'
+  ),
+  'teammate_webhook_deliveries.webhook_id': owned(
+    'Deliveries of a deleted webhook are deleted with it.'
+  ),
+  'teammate_webhook_deliveries.session_id': clear(
+    'A foreign delivery survives; clear session provenance.'
+  ),
+  'teammate_webhook_deliveries.task_id': clear(
+    'A foreign delivery survives; clear task provenance.'
+  ),
   'branch_owners.branch_id': owned('Retain all authorization rows until finalization.'),
   'branch_group_grants.branch_id': owned(
     'Retain compatibility authorization rows until finalization.'

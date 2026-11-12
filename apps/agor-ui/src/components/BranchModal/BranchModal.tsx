@@ -29,6 +29,7 @@ import { PermissionsTab } from './tabs/PermissionsTab';
 import { ScheduleTab } from './tabs/ScheduleTab';
 import { SessionsTab } from './tabs/SessionsTab';
 import { TeammateTab } from './tabs/TeammateTab';
+import { WebhookTab } from './tabs/WebhookTab';
 import {
   type BranchModalSaveResult,
   type BranchUpdate,
@@ -43,7 +44,11 @@ export type BranchModalTab =
   | 'environment'
   | 'files'
   | 'permissions'
-  | 'schedule';
+  | 'schedule'
+  | 'webhooks';
+
+/** Tabs whose in-place forms hold drafts outside the branch form. */
+type DraftTab = Extract<BranchModalTab, 'schedule' | 'webhooks'>;
 
 export interface BranchModalProps {
   open: boolean;
@@ -106,13 +111,21 @@ export const BranchModal: React.FC<BranchModalProps> = ({
   const compact = !screens.md;
   const { showSuccess } = useThemedMessage();
   const [saveError, setSaveError] = useState<ActionErrorCopy | null>(null);
-  // The open Schedules form's dirty getter; joins the branch form in the
-  // drill-in leave guard (Back, nav switch, close) and gates Save's close.
-  const scheduleDraftRef = useRef<(() => boolean) | null>(null);
+  // The open Schedules / Webhooks forms' dirty getters; they join the branch
+  // form in the drill-in leave guard (Back, nav switch, close) and gate Save's close.
+  const draftRefs = useRef<Record<DraftTab, (() => boolean) | null>>({
+    schedule: null,
+    webhooks: null,
+  });
   const setScheduleDraft = useCallback((isDirty: (() => boolean) | null) => {
-    scheduleDraftRef.current = isDirty;
+    draftRefs.current.schedule = isDirty;
   }, []);
-  const isScheduleDirty = () => scheduleDraftRef.current?.() ?? false;
+  const setWebhookDraft = useCallback((isDirty: (() => boolean) | null) => {
+    draftRefs.current.webhooks = isDirty;
+  }, []);
+  const dirtyDraftTab = (): DraftTab | null =>
+    (Object.keys(draftRefs.current) as DraftTab[]).find((tab) => draftRefs.current[tab]?.()) ??
+    null;
   const confirmDiscard = useDiscardConfirm();
   // Teammate records render a 'teammate' tab FIRST (see tabItems below), so the
   // default tab must follow the record kind — otherwise a teammate opens on its
@@ -215,10 +228,11 @@ export const BranchModal: React.FC<BranchModalProps> = ({
     if (result.ok) {
       showSuccess(isATeammate ? 'Teammate updated.' : 'Branch updated.');
       if (!current) return;
-      // The branch is saved, but an open schedule draft is not part of it: show
-      // the draft and ask before closing; Keep editing stays on it.
-      if (isScheduleDirty()) {
-        setActiveTab('schedule');
+      // The branch is saved, but an open schedule or webhook draft is not part
+      // of it: show the draft and ask before closing; Keep editing stays on it.
+      const draftTab = dirtyDraftTab();
+      if (draftTab) {
+        setActiveTab(draftTab);
         confirmDiscard(true, onClose);
       } else {
         onClose();
@@ -359,6 +373,29 @@ export const BranchModal: React.FC<BranchModalProps> = ({
         />
       ),
     },
+    // Webhooks are teammate-only: an external system starts the teammate over HTTP.
+    ...(isATeammate
+      ? [
+          {
+            key: 'webhooks',
+            label: 'Webhooks',
+            children: (
+              <WebhookTab
+                branch={branch}
+                client={client}
+                mcpServerById={mcpServerById}
+                currentUser={currentUser}
+                userById={userById}
+                onOpenSession={(sessionId) => {
+                  onSessionClick?.(sessionId);
+                  onClose();
+                }}
+                onDraftChange={setWebhookDraft}
+              />
+            ),
+          },
+        ]
+      : []),
     // Knowledge is teammate-only and intentionally last for now: it is
     // configuration-adjacent but less central than the primary branch/session tabs.
     ...(isATeammate
@@ -441,7 +478,7 @@ export const BranchModal: React.FC<BranchModalProps> = ({
     return (
       <DrillInFrame
         title={title}
-        dirty={() => form.hasChanges || isScheduleDirty()}
+        dirty={() => form.hasChanges || dirtyDraftTab() !== null}
         saving={form.saving}
         saveLabel="Save Changes"
         onSave={canSave ? handleSave : undefined}

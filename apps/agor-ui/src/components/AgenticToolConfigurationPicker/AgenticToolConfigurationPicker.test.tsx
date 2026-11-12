@@ -409,3 +409,23 @@ describe('AgenticToolConfigurationPicker schedule-run resolution copy', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('AgenticToolConfigurationPicker webhook-run resolution copy', () => {
+  it('describes per-run user-default resolution for teammate webhooks', async () => {
+    render(
+      <Form initialValues={{ agenticToolPresetId: USER_DEFAULT_AGENTIC_CONFIGURATION }}>
+        <AgenticToolConfigurationPicker
+          tool="codex"
+          client={makeClient()}
+          mcpServerById={new Map()}
+          defaultResolution="webhook-run"
+        />
+      </Form>
+    );
+    expect(
+      await screen.findByText(
+        "Resolved from the webhook creator's current default each time this webhook starts a run."
+      )
+    ).toBeInTheDocument();
+  });
+});

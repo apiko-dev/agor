@@ -100,6 +100,10 @@ Every teammate has a `BOARD.md` file that describes the semantics of its main (r
 
 Configure heartbeat frequency through Agor's [scheduler](/guide/scheduler), from every few minutes to once a day.
 
+### Webhooks (runs started by other systems)
+
+A teammate can also start when another system calls it. Each [teammate webhook](/guide/teammate-webhooks) has its own URL, token, and prompt template, so a Jira issue event or a CI job can start a new session on the teammate's branch with the request body filled into the prompt. Create webhooks in the **Webhooks** tab of the teammate's branch.
+
 ### Skills
 
 Teammates aren't limited to code generation. They can be equipped with **skills** that extend their capabilities through tools, APIs, and integrations. Skills are defined in the framework repo and give your teammate the ability to interact with external systems.

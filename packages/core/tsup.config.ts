@@ -35,6 +35,8 @@ export default defineConfig({
     'templates/session-context': 'src/templates/session-context.ts', // Agor system prompt rendering
     'templates/spawn-subsession-template': 'src/templates/spawn-subsession-template.ts', // Spawn-subsession meta-prompt
     'templates/teammate-welcome-note': 'src/templates/teammate-welcome-note.ts', // Teammate board welcome note renderer
+    'templates/teammate-webhook-prompt': 'src/templates/teammate-webhook-prompt.ts', // Browser-safe teammate webhook prompt validator/renderer
+    'templates/untrusted-encoding': 'src/templates/untrusted-encoding.ts', // Browser-safe untrusted prompt data encoders
     'templates/zone-trigger-context': 'src/templates/zone-trigger-context.ts', // Canonical zone-trigger context builder
     'environment/variable-resolver': 'src/environment/variable-resolver.ts', // Environment variable resolution
     'environment/lifecycle-result': 'src/environment/lifecycle-result.ts', // Tiny dynamic managed-environment Start result

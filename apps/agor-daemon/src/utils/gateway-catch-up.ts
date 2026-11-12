@@ -3,6 +3,7 @@ import type {
   GatewayProviderHistoryRequest,
   GatewayProviderHistoryResult,
 } from '@agor/core/gateway';
+import { encodeUntrustedJson } from '@agor/core/templates/untrusted-encoding';
 
 export type GatewayCatchUpFailureKind = 'unsupported' | 'incomplete' | 'malformed' | 'prompt_limit';
 
@@ -18,30 +19,11 @@ export class GatewayCatchUpError extends Error {
 }
 
 function encodeStructuredPrompt(value: unknown): string {
-  const encoded = JSON.stringify(value);
+  const encoded = encodeUntrustedJson(value);
   if (encoded === undefined) {
     throw new GatewayCatchUpError('malformed', 'Prompt data was not serializable');
   }
-  // JSON escaping prevents quotes/newlines from changing the record shape.
-  // Escape markup delimiters as well so provider text cannot become a tag or
-  // Markdown fence in the rendered prompt surface.
-  return [...encoded]
-    .map((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      const isControlCharacter =
-        codePoint <= 0x1f ||
-        (codePoint >= 0x7f && codePoint <= 0x9f) ||
-        codePoint === 0x2028 ||
-        codePoint === 0x2029;
-      return character === '<' ||
-        character === '>' ||
-        character === '`' ||
-        character === '&' ||
-        isControlCharacter
-        ? `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
-        : character;
-    })
-    .join('');
+  return encoded;
 }
 
 /**

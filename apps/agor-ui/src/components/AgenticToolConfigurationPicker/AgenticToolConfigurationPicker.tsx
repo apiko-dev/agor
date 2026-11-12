@@ -26,6 +26,13 @@ export const SAVE_AS_DEFAULT_FIELD = 'saveAsDefault';
 
 const PreservedFormValue: React.FC<{ value?: unknown }> = () => null;
 
+type RunResolution = 'schedule-run' | 'webhook-run';
+
+const RUN_RESOLUTION_COPY: Record<RunResolution, { creator: string; runs: string }> = {
+  'schedule-run': { creator: "schedule creator's", runs: 'this schedule runs' },
+  'webhook-run': { creator: "webhook creator's", runs: 'this webhook starts a run' },
+};
+
 interface Props extends Omit<AgenticToolConfigFormProps, 'agenticTool' | 'client'> {
   tool: AgenticToolName;
   client: AgorClient | null;
@@ -35,11 +42,12 @@ interface Props extends Omit<AgenticToolConfigFormProps, 'agenticTool' | 'client
   inheritedMcpServerIds?: string[];
   fieldName?: string;
   /**
-   * How a reserved default/preset resolves — surfaced as a schedule-run note.
+   * How a reserved default/preset resolves — surfaced as a per-run note.
    * `save` (default) shows no banner (the redesign relies on inline resolved
-   * summaries); `schedule-run` explains per-run resolution for ScheduleForm.
+   * summaries); `schedule-run` / `webhook-run` explain per-run resolution for
+   * ScheduleForm / TeammateWebhookForm.
    */
-  defaultResolution?: 'save' | 'schedule-run';
+  defaultResolution?: 'save' | RunResolution;
   /** Current user — resolves "My default" and gates the save-as-default checkbox. */
   currentUser?: DirectoryUser | null;
   /** False while a persisted configuration's execution owner is still hydrating. */
@@ -224,31 +232,29 @@ export const AgenticToolConfigurationPicker: React.FC<Props> = ({
         <Alert type="error" showIcon title="No administrator-managed preset is available" />
       )}
 
-      {/* Schedules resolve reserved defaults/presets at each run — keep #1963's
+      {/* Schedules and webhooks resolve reserved defaults/presets at each run — keep #1963's
           per-run note. Save-context surfaces rely on the inline resolved
           summaries instead of a banner (WS3 redesign). */}
-      {defaultResolution === 'schedule-run' &&
-        selected &&
-        selected !== INLINE_AGENTIC_CONFIGURATION && (
-          <Alert
-            type="info"
-            showIcon
-            title={
-              selected === USER_DEFAULT_AGENTIC_CONFIGURATION
-                ? 'Using your default'
-                : selected === WORKSPACE_DEFAULT_AGENTIC_CONFIGURATION
-                  ? 'Using the workspace default'
-                  : 'Managed by preset'
-            }
-            description={
-              selected === USER_DEFAULT_AGENTIC_CONFIGURATION
-                ? "Resolved from the schedule creator's current default each time this schedule runs."
-                : selected === WORKSPACE_DEFAULT_AGENTIC_CONFIGURATION
-                  ? 'Resolved from the current workspace default each time this schedule runs.'
-                  : 'The latest version of this preset is used each time this schedule runs.'
-            }
-          />
-        )}
+      {defaultResolution !== 'save' && selected && selected !== INLINE_AGENTIC_CONFIGURATION && (
+        <Alert
+          type="info"
+          showIcon
+          title={
+            selected === USER_DEFAULT_AGENTIC_CONFIGURATION
+              ? 'Using your default'
+              : selected === WORKSPACE_DEFAULT_AGENTIC_CONFIGURATION
+                ? 'Using the workspace default'
+                : 'Managed by preset'
+          }
+          description={
+            selected === USER_DEFAULT_AGENTIC_CONFIGURATION
+              ? `Resolved from the ${RUN_RESOLUTION_COPY[defaultResolution].creator} current default each time ${RUN_RESOLUTION_COPY[defaultResolution].runs}.`
+              : selected === WORKSPACE_DEFAULT_AGENTIC_CONFIGURATION
+                ? `Resolved from the current workspace default each time ${RUN_RESOLUTION_COPY[defaultResolution].runs}.`
+                : `The latest version of this preset is used each time ${RUN_RESOLUTION_COPY[defaultResolution].runs}.`
+          }
+        />
+      )}
 
       {selected === INLINE_AGENTIC_CONFIGURATION && inlineAllowed && (
         <>

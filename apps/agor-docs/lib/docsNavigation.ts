@@ -26,6 +26,7 @@ export const guideNavigation: Record<string, NavigationItem> = {
   permissions: 'Sharing & Permissions',
   'environment-configuration': 'Branch Environments',
   scheduler: 'Scheduler',
+  'teammate-webhooks': 'Teammate Webhooks',
   'message-gateway': 'Message Gateway',
   'rich-chat-ux': 'Rich Chat UX',
   'in-conversation-widgets': 'In-Conversation Widgets',

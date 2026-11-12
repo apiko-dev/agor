@@ -49,6 +49,8 @@ export type SystemDatabaseCapability =
   | 'discord_message_delivery_discovery'
   | 'teams_gateway_ingress_discovery'
   | 'teams_message_delivery_discovery'
+  | 'teammate_webhook_ingress_discovery'
+  | 'teammate_webhook_delivery_discovery'
   | 'knowledge_embedding_discovery'
   | 'scheduler_discovery'
   | 'task_queue_discovery'

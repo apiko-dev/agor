@@ -161,6 +161,9 @@ import {
   MCP_OAUTH_BROWSER_OPERATIONS,
   ROLES,
   TaskStatus,
+  TEAMMATE_WEBHOOK_DELIVERIES_SERVICE,
+  TEAMMATE_WEBHOOK_TOKEN_SERVICE,
+  TEAMMATE_WEBHOOKS_SERVICE,
 } from '@agor/core/types';
 import type { UnixUserMode } from '@agor/core/unix';
 import { runWithLogContext } from '@agor/core/utils/log-context';
@@ -379,6 +382,10 @@ import {
   type TasksService,
 } from './services/tasks.js';
 import { TASKS_SERVICE_CUSTOM_EVENTS } from './services/tasks-events.js';
+import {
+  createTeammateWebhookServices,
+  TEAMMATE_WEBHOOKS_TRANSPORT_METHODS,
+} from './services/teammate-webhooks.js';
 import { createTemplatesService } from './services/templates.js';
 import { createTenantAgenticToolSettingsService } from './services/tenant-agentic-tools.js';
 import { TerminalsService } from './services/terminals.js';
@@ -841,6 +848,19 @@ export async function registerServices(ctx: RegisterServicesContext): Promise<Re
   // First-class schedules. RBAC hooks wired in register-hooks.ts.
   app.use('/schedules', createSchedulesService(db), {
     methods: [...SCHEDULES_SERVICE_TRANSPORT_METHODS],
+  });
+
+  // Teammate webhooks: definitions, the one-time token route, and read-only
+  // delivery history. RBAC hooks wired in register-hooks.ts.
+  const teammateWebhookServices = createTeammateWebhookServices(db, app);
+  app.use(TEAMMATE_WEBHOOKS_SERVICE, teammateWebhookServices.webhooks, {
+    methods: [...TEAMMATE_WEBHOOKS_TRANSPORT_METHODS],
+  });
+  app.use(TEAMMATE_WEBHOOK_TOKEN_SERVICE, teammateWebhookServices.token, {
+    methods: ['create'],
+  });
+  app.use(TEAMMATE_WEBHOOK_DELIVERIES_SERVICE, teammateWebhookServices.deliveries, {
+    methods: ['find', 'get'],
   });
 
   // ============================================================================

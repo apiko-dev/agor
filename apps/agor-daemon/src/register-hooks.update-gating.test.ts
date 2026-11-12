@@ -24,6 +24,7 @@ import {
 import { KNOWLEDGE_GRAPH_SERVICE_TRANSPORT_METHODS } from './services/knowledge-graph';
 import { SCHEDULES_SERVICE_TRANSPORT_METHODS } from './services/schedules';
 import { TASKS_SERVICE_TRANSPORT_METHODS } from './services/tasks';
+import { TEAMMATE_WEBHOOKS_TRANSPORT_METHODS } from './services/teammate-webhooks';
 import { USERS_SERVICE_TRANSPORT_METHODS } from './services/users';
 import { BRANCH_REMOVAL_VISIBILITY_PARAM } from './utils/realtime-publish';
 
@@ -395,6 +396,8 @@ const UPDATE_NOT_ROUTED: Record<string, string | readonly string[]> = {
   'me/artifact-trust-grants': 'no update method — custom route exposes find and remove only',
   schedules: SCHEDULES_SERVICE_TRANSPORT_METHODS,
   tasks: TASKS_SERVICE_TRANSPORT_METHODS,
+  'teammate-webhooks': TEAMMATE_WEBHOOKS_TRANSPORT_METHODS,
+  'teammate-webhooks/:id/token': 'no update method — token route exposes create only',
   users: USERS_SERVICE_TRANSPORT_METHODS,
 };
 
@@ -593,6 +596,7 @@ describe('pinned methods list', () => {
       'kb/graph',
       'schedules',
       'tasks',
+      'teammate-webhooks',
       'users',
     ]);
   });

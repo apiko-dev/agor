@@ -37,17 +37,9 @@
  *   as a v0.19 backwards-compat alias.
  */
 
-import { materializeAgenticToolConfiguration } from '@agor/agentic-tools/config';
 import { isMCPServerNotUsableError } from '@agor/core';
 import { analyticsLogger } from '@agor/core/analytics';
-import {
-  type DeploymentAgenticToolPolicy,
-  InvalidScheduleAgenticToolConfigError,
-  isDeploymentAgenticToolAvailable,
-  isTenantAgenticToolEnabled,
-  normalizePersistedScheduleAgenticToolConfig,
-  unixUserModeRequiresExecutionHomeKey,
-} from '@agor/core/config';
+import type { DeploymentAgenticToolPolicy } from '@agor/core/config';
 import {
   boundedBackoffDelay,
   type DistributedWorkIdentity,
@@ -55,7 +47,7 @@ import {
 } from '@agor/core/coordination';
 import type { TenantScopeAwareDatabase } from '@agor/core/db';
 import {
-  BranchRepository,
+  type BranchRepository,
   bindRepositoryToTenantUnitOfWork,
   EntityNotFoundError,
   generateId,
@@ -66,16 +58,14 @@ import {
   runWithTenantContext,
   runWithTenantDatabaseScope,
   ScheduleRepository,
-  SessionMCPServerRepository,
   SessionRepository,
   TaskRepository,
-  UsersRepository,
+  type UsersRepository,
 } from '@agor/core/db';
-import { BadRequest, Forbidden } from '@agor/core/feathers';
+import { type BadRequest, Forbidden } from '@agor/core/feathers';
 import type {
   AgenticToolName,
   Branch,
-  MCPServerID,
   PersistedScheduleAgenticToolConfig,
   Schedule,
   ScheduleID,
@@ -91,14 +81,10 @@ import type {
 } from '@agor/core/types';
 import {
   EXECUTING_SESSION_STATUSES,
-  hasMinimumRole,
-  isAgenticToolName,
   isSessionExecuting,
   isTaskPendingDispatch,
   isTerminalTaskStatus,
   NONTERMINAL_TASK_STATUSES,
-  ROLES,
-  SessionStatus,
 } from '@agor/core/types';
 import type { UnixUserMode } from '@agor/core/unix';
 import {
@@ -108,16 +94,8 @@ import {
   roundToMinute,
 } from '@agor/core/utils/cron';
 import Handlebars from 'handlebars';
-import {
-  resolveBranchSdkHomeIncompatibility,
-  resolveNewSessionSdkHomeScope,
-  type SdkHomeMode,
-} from '../branch-sdk-home.js';
+import type { SdkHomeMode } from '../branch-sdk-home.js';
 import type { Application } from '../declarations';
-import {
-  materializedAgenticToolConfigurationToScheduleConfig,
-  scheduleAgenticToolConfigToSource,
-} from '../utils/agentic-configuration-sources.js';
 import { buildSessionCreatedAnalyticsProperties } from '../utils/analytics-payloads.js';
 import { emitServiceEvent } from '../utils/emit-service-event.js';
 import {
@@ -126,6 +104,18 @@ import {
   type StructuredLogValue,
   structuredLogErrorCode,
 } from '../utils/structured-log.js';
+import {
+  admitUnattendedSessionRow,
+  attachUnattendedMcpServers,
+  createUnattendedRunDeps,
+  dispatchUnattendedPrompt,
+  prepareUnattendedRun,
+  resolveUnattendedAgenticToolConfig,
+  resolveUnattendedMcpServerIds,
+  type UnattendedRunDeps,
+  type UnattendedRunRejection,
+  UnattendedRunRevokedError,
+} from './unattended-run.js';
 
 function isSQLiteBusyError(err: unknown): boolean {
   if (!err) return false;
@@ -188,24 +178,11 @@ export async function materializeScheduleAgenticToolConfig(
   db: TenantScopeAwareDatabase,
   schedule: Pick<Schedule, 'agentic_tool_config' | 'created_by'>
 ): Promise<PersistedScheduleAgenticToolConfig> {
-  return (await resolveScheduleAgenticToolConfig(db, schedule)).config;
-}
-
-async function resolveScheduleAgenticToolConfig(
-  db: TenantScopeAwareDatabase,
-  schedule: Pick<Schedule, 'agentic_tool_config' | 'created_by'>
-) {
-  const cfg = normalizePersistedScheduleAgenticToolConfig(schedule.agentic_tool_config);
-  const materialized = await materializeAgenticToolConfiguration(db, {
-    tool: cfg.agentic_tool,
-    source: scheduleAgenticToolConfigToSource(cfg),
-    executionOwnerId: schedule.created_by as import('@agor/core/types').UserID,
+  const resolved = await resolveUnattendedAgenticToolConfig(db, {
+    agenticToolConfig: schedule.agentic_tool_config,
+    runAsUserId: schedule.created_by,
   });
-  return {
-    activeTool: cfg.agentic_tool,
-    config: materializedAgenticToolConfigurationToScheduleConfig(cfg, materialized),
-    sessionConfig: materialized,
-  };
+  return resolved.config;
 }
 
 /**
@@ -275,6 +252,9 @@ function permanentInitializationDiagnosis(
   error: ScheduledInitializationError
 ): PermanentScheduledInitializationError | null {
   if (error.cause instanceof PermanentScheduledInitializationError) return error.cause;
+  if (error.cause instanceof UnattendedRunRevokedError) {
+    return new PermanentScheduledInitializationError('schedule_permission_revoked', error.stage);
+  }
   if (error.stage === 'mcp_attachment' && isMCPServerNotUsableError(error.cause)) {
     return new PermanentScheduledInitializationError('mcp_server_not_usable', error.stage);
   }
@@ -369,8 +349,8 @@ export class SchedulerService {
   private scheduleRepo: ScheduleRepository;
   private sessionRepo: SessionRepository;
   private userRepo: UsersRepository;
-  private sessionMCPRepo: SessionMCPServerRepository;
   private taskRepo: TaskRepository;
+  private runDeps: UnattendedRunDeps;
 
   constructor(db: TenantScopeAwareDatabase, app: Application, config: SchedulerConfig = {}) {
     this.app = app;
@@ -409,11 +389,18 @@ export class SchedulerService {
     // repository calls unchanged, including their concurrency timing.
     const bindTenantRepository = <T extends object>(repository: T): T =>
       isPostgresDatabaseHandle(db) ? bindRepositoryToTenantUnitOfWork(db, repository) : repository;
-    this.branchRepo = bindTenantRepository(new BranchRepository(db));
+    this.runDeps = createUnattendedRunDeps(db, app, {
+      unixUserMode: this.config.unixUserMode,
+      sdkHomeMode: this.config.sdkHomeMode,
+      deploymentPolicy: this.config.deploymentPolicy,
+      deploymentToolUnsupported: this.config.deploymentToolUnsupported,
+      hostedOpenCode: this.config.hostedOpenCode,
+      secureLocalCredentialOverlay: this.config.secureLocalCredentialOverlay,
+    });
+    this.branchRepo = this.runDeps.branchRepo;
+    this.userRepo = this.runDeps.userRepo;
     this.scheduleRepo = bindTenantRepository(new ScheduleRepository(db));
     this.sessionRepo = bindTenantRepository(new SessionRepository(db));
-    this.userRepo = bindTenantRepository(new UsersRepository(db));
-    this.sessionMCPRepo = bindTenantRepository(new SessionMCPServerRepository(db));
     this.taskRepo = bindTenantRepository(new TaskRepository(db));
 
     if (
@@ -787,40 +774,47 @@ export class SchedulerService {
   }
 
   /**
-   * Resolve creator's unix_username for scheduled session execution.
-   *
-   * The schedule's `created_by` user supplies the compatibility home key,
-   * keyed off `schedules.created_by` rather than `branches.created_by`.
-   *
-   * - simple/sandbox: execution home key is optional and unused
-   * - delegated: execution home key is required by the external substrate
-   *
-   * @returns Object with creator and resolved unixUsername (may be null
-   *   in simple mode)
-   * @throws Error if creator is missing or a required home key is absent
+   * Map a launcher refusal to the error the scheduler has always raised. Cron
+   * runs advance past a permission or configuration refusal so the schedule is
+   * not retried every tick; missing creators and tool gates retry.
    */
-  private async resolveCreatorUnixUsername(
-    schedule: Schedule
-  ): Promise<{ creator: User; unixUsername: string | null }> {
-    const creator = await this.withTenantDatabase(() =>
-      this.userRepo.findById(schedule.created_by)
-    );
-
-    if (!creator) {
-      throw new Error(
-        `Schedule creator ${schedule.created_by} not found. Cannot spawn scheduled session.`
-      );
+  private async scheduleRejectionError(
+    schedule: Schedule,
+    rejection: UnattendedRunRejection,
+    { manual, now }: { manual: boolean; now: number }
+  ): Promise<Error> {
+    switch (rejection.code) {
+      case 'branch_missing':
+        return new ScheduleNotReadyError(
+          'schedule_incomplete',
+          `Schedule ${schedule.schedule_id} references missing branch ${schedule.branch_id}`
+        );
+      case 'creator_missing':
+        return new Error(
+          `Schedule creator ${schedule.created_by} not found. Cannot spawn scheduled session.`
+        );
+      case 'creator_home_key_missing':
+        return new Error(
+          `Schedule creator ${rejection.creator.email} has no unix_username set. Cannot spawn scheduled session in ${this.config.unixUserMode} execution mode.`
+        );
+      case 'tool_unavailable':
+        return rejection.error;
+      case 'permission_revoked':
+        if (!manual) await this.advanceScheduleCursor(schedule, now);
+        return new ScheduleNotReadyError(
+          'schedule_permission_revoked',
+          `Schedule creator ${schedule.created_by} no longer has Manager access to branch ${schedule.branch_id}`
+        );
+      case 'agentic_tool_removed':
+        if (!manual) await this.advanceScheduleCursor(schedule, now);
+        return new ScheduleNotReadyError(
+          'schedule_agentic_tool_removed',
+          'This schedule uses the removed experimental Claude Code CLI integration. Choose a supported agentic tool before running it.'
+        );
+      case 'invalid_config':
+        if (!manual) await this.advanceScheduleCursor(schedule, now);
+        return new ScheduleNotReadyError('schedule_invalid_config', rejection.message);
     }
-
-    const unixUsername = creator.unix_username || null;
-
-    if (!unixUsername && unixUserModeRequiresExecutionHomeKey(this.config.unixUserMode)) {
-      throw new Error(
-        `Schedule creator ${creator.email} has no unix_username set. Cannot spawn scheduled session in ${this.config.unixUserMode} execution mode.`
-      );
-    }
-
-    return { creator, unixUsername };
   }
 
   /**
@@ -859,84 +853,22 @@ export class SchedulerService {
   ): Promise<Session | null> {
     const { source, triggeredBy } = options;
     const manual = source === 'manual';
-    const branch = await this.withTenantDatabase(() =>
-      this.branchRepo.findById(schedule.branch_id)
-    );
-    if (!branch) {
-      throw new ScheduleNotReadyError(
-        'schedule_incomplete',
-        `Schedule ${schedule.schedule_id} references missing branch ${schedule.branch_id}`
-      );
+    const prepared = await prepareUnattendedRun(this.runDeps, {
+      branchId: schedule.branch_id,
+      runAsUserId: schedule.created_by,
+      agenticToolConfig: schedule.agentic_tool_config,
+      mcpServerIds: schedule.mcp_server_ids,
+    });
+    if (!prepared.ok) {
+      throw await this.scheduleRejectionError(schedule, prepared.rejection, { manual, now });
     }
-    // Fire-time half of the write gate: the creator must still be a workspace member and branch Manager.
-    const permissionRevoked = async () => {
-      if (!manual) await this.advanceScheduleCursor(schedule, now);
-      return new ScheduleNotReadyError(
-        'schedule_permission_revoked',
-        `Schedule creator ${schedule.created_by} no longer has Manager access to branch ${schedule.branch_id}`
-      );
-    };
-    const creatorAccess = await this.withTenantDatabase(() =>
-      this.branchRepo.resolveUserAccess(branch, schedule.created_by)
-    );
-    if (creatorAccess.can !== 'all') throw await permissionRevoked();
-    const { creator, unixUsername } = await this.resolveCreatorUnixUsername(schedule);
-    if (!hasMinimumRole(creator.role, ROLES.MEMBER)) throw await permissionRevoked();
+    const { run } = prepared;
+    const { branch } = run;
     // Prepare all configuration outside the admission transaction. The only
     // work performed while the schedule row is locked is existing/busy checks
     // and the session insert.
     const renderedPrompt = renderSchedulePrompt(schedule.prompt, branch, schedule, scheduledRunAt);
-    let resolvedConfig: Awaited<ReturnType<typeof resolveScheduleAgenticToolConfig>>;
-    try {
-      resolvedConfig = await this.withTenantDatabase(() =>
-        resolveScheduleAgenticToolConfig(this.db, schedule)
-      );
-    } catch (error) {
-      if (!(error instanceof InvalidScheduleAgenticToolConfigError)) throw error;
-      const removedTool = !isAgenticToolName(schedule.agentic_tool_config.agentic_tool);
-      if (!manual) await this.advanceScheduleCursor(schedule, now);
-      throw new ScheduleNotReadyError(
-        removedTool ? 'schedule_agentic_tool_removed' : 'schedule_invalid_config',
-        removedTool
-          ? 'This schedule uses the removed experimental Claude Code CLI integration. Choose a supported agentic tool before running it.'
-          : error.message
-      );
-    }
-    const cfg = resolvedConfig.config;
-    if (
-      !isDeploymentAgenticToolAvailable(resolvedConfig.activeTool, this.config.deploymentPolicy)
-    ) {
-      throw new BadRequest(`${resolvedConfig.activeTool} is not installed for this deployment`);
-    }
-    const unsupported = this.config.deploymentToolUnsupported(resolvedConfig.activeTool);
-    if (unsupported) throw unsupported;
-    if (
-      !(await this.withTenantDatabase(() =>
-        isTenantAgenticToolEnabled(resolvedConfig.activeTool, this.db)
-      ))
-    ) {
-      throw new BadRequest(`${resolvedConfig.activeTool} is disabled for this workspace`);
-    }
-    // Native Codex auth cannot be projected safely into branch-owned state.
-    // Resolve it before admission so a rejected scheduled run cannot leave an
-    // otherwise-unused branch permanently adopted. Executor startup repeats
-    // the check for defense in depth and actor-sensitive shared prompts.
-    const branchSdkHomeIncompatibility = await this.withTenantDatabase(() =>
-      resolveBranchSdkHomeIncompatibility({
-        tool: resolvedConfig.activeTool,
-        delegated: this.config.unixUserMode === 'delegated',
-        hostedOpenCode: this.config.hostedOpenCode,
-        secureLocalCredentialOverlay: this.config.secureLocalCredentialOverlay,
-        userId: schedule.created_by as import('@agor/core/types').UserID,
-        db: this.db,
-      })
-    );
-    const effectiveMcpIds =
-      schedule.mcp_server_ids !== undefined
-        ? schedule.mcp_server_ids
-        : branch.mcp_server_ids && branch.mcp_server_ids.length > 0
-          ? branch.mcp_server_ids
-          : [];
+    const effectiveMcpIds = run.mcpServerIds;
     const candidateSessionId = generateId() as SessionID;
     const candidateTaskId = generateId() as TaskID;
 
@@ -969,61 +901,34 @@ export class SchedulerService {
         }
 
         const runIndex = (await this.sessionRepo.countByScheduleId(schedule.schedule_id)) + 1;
-        const currentBranch = await this.branchRepo.findById(branch.branch_id);
-        if (!currentBranch) {
-          throw new EntityNotFoundError('Branch', branch.branch_id);
-        }
-        const sdkHomeAdmission = resolveNewSessionSdkHomeScope({
-          branchSdkHomeIntent: currentBranch.sdk_home ?? null,
-          enabledForNewSessions: this.config.sdkHomeMode === 'per_branch',
-        });
-        if (sdkHomeAdmission.scope === 'branch') {
-          const unsupportedReason = branchSdkHomeIncompatibility;
-          if (unsupportedReason) {
-            throw new BadRequest(
-              `${resolvedConfig.activeTool} cannot use a branch SDK home because ${unsupportedReason}`
-            );
-          }
-        }
-        if (sdkHomeAdmission.adoptBranch) {
-          await this.branchRepo.adoptSdkHome(currentBranch.branch_id);
-        }
-        const session: Partial<Session> = {
-          session_id: candidateSessionId,
-          branch_id: branch.branch_id,
-          agentic_tool: resolvedConfig.activeTool,
-          agentic_tool_preset_id: resolvedConfig.sessionConfig.agentic_tool_preset_id ?? undefined,
-          status: SessionStatus.IDLE,
-          created_by: schedule.created_by,
-          unix_username: unixUsername,
-          sdk_home_scope: sdkHomeAdmission.scope,
-          scheduled_run_at: scheduledRunAt,
-          scheduled_from_branch: true,
-          schedule_id: schedule.schedule_id,
+        const session = await admitUnattendedSessionRow(this.runDeps, run, {
+          sessionId: candidateSessionId,
           title: manual
             ? `${schedule.name} — manual @ ${new Date(scheduledRunAt).toISOString()}`
             : `${schedule.name} — ${new Date(scheduledRunAt).toISOString()}`,
-          contextFiles: cfg.context_files ?? [],
-          permission_config: resolvedConfig.sessionConfig.permission_config,
-          model_config: resolvedConfig.sessionConfig.model_config,
-          custom_context: {
-            scheduled_run: {
-              rendered_prompt: renderedPrompt,
-              run_index: runIndex,
-              initial_task_id: candidateTaskId,
-              triggered_manually: manual,
-              triggered_by: manual ? triggeredBy : undefined,
-              schedule_config_snapshot: {
-                schedule_id: schedule.schedule_id,
-                cron: schedule.cron_expression,
-                timezone: resolveScheduleTz(schedule.timezone_mode, schedule.timezone),
-                retention: schedule.retention,
-                allow_concurrent_runs: schedule.allow_concurrent_runs,
-                mcp_server_ids: effectiveMcpIds,
+          extra: {
+            scheduled_run_at: scheduledRunAt,
+            scheduled_from_branch: true,
+            schedule_id: schedule.schedule_id,
+            custom_context: {
+              scheduled_run: {
+                rendered_prompt: renderedPrompt,
+                run_index: runIndex,
+                initial_task_id: candidateTaskId,
+                triggered_manually: manual,
+                triggered_by: manual ? triggeredBy : undefined,
+                schedule_config_snapshot: {
+                  schedule_id: schedule.schedule_id,
+                  cron: schedule.cron_expression,
+                  timezone: resolveScheduleTz(schedule.timezone_mode, schedule.timezone),
+                  retention: schedule.retention,
+                  allow_concurrent_runs: schedule.allow_concurrent_runs,
+                  mcp_server_ids: effectiveMcpIds,
+                },
               },
             },
           },
-        };
+        });
         // This is an already-materialized internal occurrence admission, not a
         // public Session create. Keep the schedule lock around only the row
         // checks and repository insert; Feathers validation/hooks (including
@@ -1119,7 +1024,7 @@ export class SchedulerService {
       await this.initializeScheduledSession({
         scheduleId: schedule.schedule_id,
         session: admission.session,
-        creator,
+        creator: run.creator,
         fallbackPrompt: renderedPrompt,
         fallbackMcpIds: effectiveMcpIds,
         recovering,
@@ -1206,12 +1111,7 @@ export class SchedulerService {
         return;
       }
       fallbackPrompt ??= renderSchedulePrompt(schedule.prompt, branch, schedule, scheduledRunAt);
-      fallbackMcpIds ??=
-        schedule.mcp_server_ids !== undefined
-          ? schedule.mcp_server_ids
-          : branch.mcp_server_ids && branch.mcp_server_ids.length > 0
-            ? branch.mcp_server_ids
-            : [];
+      fallbackMcpIds ??= resolveUnattendedMcpServerIds(schedule.mcp_server_ids, branch);
     }
     if (fallbackPrompt === undefined) {
       await this.recordInitializationFailure(
@@ -1402,91 +1302,31 @@ export class SchedulerService {
       );
     }
 
-    for (const serverId of effectiveMcpIds) {
-      try {
-        await this.atInitializationStage('mcp_attachment', () =>
-          this.withTenantDatabase(() =>
-            this.sessionMCPRepo.addServer(session.session_id, serverId as MCPServerID)
-          )
-        );
-        emitServiceEvent(this.app, {
-          path: 'session-mcp-servers',
-          event: 'created',
-          data: {
+    await this.atInitializationStage('mcp_attachment', () =>
+      attachUnattendedMcpServers(this.runDeps, {
+        sessionId: session.session_id,
+        mcpServerIds: effectiveMcpIds,
+        onMissingServer: (mcpServerId) =>
+          this.logWorkEvent('warn', 'mcp_attachment_missing', {
+            schedule_id: scheduleId,
             session_id: session.session_id,
-            mcp_server_id: serverId,
-            enabled: true,
-            added_at: new Date(),
-          },
-        });
-      } catch (error) {
-        // Preserve settled behavior for an optional server deleted between
-        // schedule configuration and initialization. Transient database
-        // failures must escape so this occurrence remains recoverable.
-        const cause = error instanceof ScheduledInitializationError ? error.cause : error;
-        if (!(cause instanceof EntityNotFoundError)) throw error;
-        this.logWorkEvent('warn', 'mcp_attachment_missing', {
-          schedule_id: scheduleId,
-          session_id: session.session_id,
-          mcp_server_id: serverId,
-        });
-      }
-    }
+            mcp_server_id: mcpServerId,
+          }),
+      })
+    );
     await this.config.testHooks?.afterMcpAttachments?.(session);
 
-    const tenantId = getCurrentTenantId();
-    const task = await this.atInitializationStage('prompt_admission', async () => {
-      // Internal prompt calls skip provider hooks. Re-evaluate at the Task
-      // boundary so a revocation that races Session admission, or occurs
-      // before crash recovery, cannot launch new work. An already-admitted
-      // stable Task has crossed this boundary and is only reconciled here.
-      if (!existingInitialTask) {
-        const authority = await this.withTenantDatabase(() =>
-          this.branchRepo.resolveSessionPromptAuthority(
-            session.branch_id,
-            session.created_by as UUID,
-            session.created_by as UUID,
-            session.sdk_home_scope
-          )
-        );
-        // Recovery can run long after admission, so repeat the Manager + member half of the gate too.
-        const currentBranch = await this.withTenantDatabase(() =>
-          this.branchRepo.findById(session.branch_id)
-        );
-        const creatorAccess = currentBranch
-          ? await this.withTenantDatabase(() =>
-              this.branchRepo.resolveUserAccess(currentBranch, session.created_by as UUID)
-            )
-          : undefined;
-        if (
-          !authority.allowed ||
-          creatorAccess?.can !== 'all' ||
-          !hasMinimumRole(creator?.role, ROLES.MEMBER)
-        ) {
-          throw new PermanentScheduledInitializationError(
-            'schedule_permission_revoked' as Exclude<
-              SchedulerInitializationFailureCode,
-              'initialization_transient'
-            >,
-            'prompt_admission'
-          );
-        }
-      }
-      return (await this.app.service('/sessions/:id/prompt').create(
-        {
-          prompt: renderedPrompt,
-          permissionMode: session.permission_config?.mode || 'acceptEdits',
-          stream: true,
-          idempotencyTaskId: initialTaskId,
-        },
-        {
-          route: { id: session.session_id },
-          provider: undefined,
-          ...(creator ? { user: creator } : {}),
-          ...(tenantId ? { tenant: { tenant_id: tenantId, source: 'explicit' as const } } : {}),
-        } as import('@agor/core/types').AuthenticatedParams & { route: { id: string } }
-      )) as Task;
-    });
+    // An already-admitted stable Task has crossed the authority boundary and
+    // is only reconciled here.
+    const task = await this.atInitializationStage('prompt_admission', () =>
+      dispatchUnattendedPrompt(this.runDeps, {
+        session,
+        creator,
+        prompt: renderedPrompt,
+        taskId: initialTaskId,
+        taskAlreadyAdmitted: existingInitialTask !== undefined,
+      })
+    );
     await this.config.testHooks?.afterPromptDispatch?.(task);
 
     this.logWorkEvent(

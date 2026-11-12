@@ -54,6 +54,8 @@ export * from './session-mcp-servers';
 export * from './session-relationships';
 export * from './sessions';
 export * from './tasks';
+export * from './teammate-webhook-deliveries';
+export * from './teammate-webhooks';
 export * from './teams-conversation-addresses';
 export * from './teams-message-deliveries';
 export * from './tenant-agentic-tools';

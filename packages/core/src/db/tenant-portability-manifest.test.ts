@@ -10,6 +10,7 @@ import {
   buildTenantInsertOrder,
   derivedImperativeTableNames,
   nonPortableTenantTableNames,
+  TENANT_IMPORT_CLEARED_COLUMNS,
   tenantPortabilityForeignKeys,
   tenantPortabilityTableNames,
 } from './tenant-portability-manifest';
@@ -53,6 +54,7 @@ describe('buildTenantInsertOrder', () => {
       'github_install_states',
       'mcp_oauth_client_registrations',
       'mcp_oauth_pending_flows',
+      'teammate_webhook_deliveries',
       'teams_conversation_addresses',
       'teams_message_deliveries',
       'user_mcp_oauth_tokens',
@@ -68,7 +70,7 @@ describe('buildTenantInsertOrder', () => {
 describe('tenantPortabilityForeignKeys', () => {
   it('freezes the exact schema-derived movable FK set', () => {
     const foreignKeys = tenantPortabilityForeignKeys();
-    expect(foreignKeys).toHaveLength(110);
+    expect(foreignKeys).toHaveLength(113);
     expect(Object.isFrozen(foreignKeys)).toBe(true);
     const structuralKeys = foreignKeys.map((foreignKey) =>
       [
@@ -168,6 +170,27 @@ describe('tenantPortabilityForeignKeys', () => {
         }),
       ])
     );
+  });
+
+  it('moves webhook definitions with their branch, preset, and creator but never their deliveries', () => {
+    const webhookForeignKeys = tenantPortabilityForeignKeys().filter(
+      (fk) => fk.childTable === 'teammate_webhooks'
+    );
+    expect(webhookForeignKeys.map((fk) => fk.parentTable).sort()).toEqual([
+      'agentic_tool_presets',
+      'branches',
+      'users',
+    ]);
+    expect(tenantPortabilityForeignKeys()).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ childTable: 'teammate_webhook_deliveries' }),
+      ])
+    );
+    expect(TENANT_IMPORT_CLEARED_COLUMNS.teammate_webhooks).toEqual([
+      'token_hash',
+      'token_hint',
+      'token_issued_at',
+    ]);
   });
 
   it('includes both sides of the boards and branches cycle', () => {
