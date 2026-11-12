@@ -1,4 +1,10 @@
-import type { AgenticToolName, ZoneBoardObject, ZoneTriggerBehavior } from '@agor-live/client';
+import type {
+  AgenticToolName,
+  ZoneBoardObject,
+  ZoneTrigger,
+  ZoneTriggerBehavior,
+  ZoneTriggerModelConfig,
+} from '@agor-live/client';
 import { isAgenticToolName } from '@agor-live/client';
 import { sanitizeZoneFontSize } from './zoneFontSize';
 
@@ -8,10 +14,32 @@ export interface ZoneConfigDraft {
   triggerBehavior: ZoneTriggerBehavior;
   triggerTemplate: string;
   triggerAgent: AgenticToolName | null;
+  /** Model/effort for zone-created sessions; undefined uses the dropping user's defaults. */
+  triggerModelConfig: ZoneTriggerModelConfig | undefined;
   borderColor?: string;
   backgroundColor?: string;
   fontSize?: number;
   clearLegacyColor: boolean;
+}
+
+/** Drop empty fields; a selection with neither a model nor an effort means "use defaults". */
+function normalizeZoneModelConfig(
+  config: ZoneTriggerModelConfig | undefined
+): ZoneTriggerModelConfig | undefined {
+  const model = config?.model?.trim();
+  const effort = config?.effort;
+  if (!model && !effort) return undefined;
+  return {
+    ...(model && { mode: config?.mode ?? 'alias', model }),
+    ...(effort && { effort }),
+  };
+}
+
+function sameZoneModelConfig(
+  a: ZoneTriggerModelConfig | undefined,
+  b: ZoneTriggerModelConfig | undefined
+): boolean {
+  return a?.mode === b?.mode && a?.model === b?.model && a?.effort === b?.effort;
 }
 
 export function createZoneConfigDraft(zone: ZoneBoardObject, name: string): ZoneConfigDraft {
@@ -22,6 +50,7 @@ export function createZoneConfigDraft(zone: ZoneBoardObject, name: string): Zone
     triggerBehavior: zone.trigger?.behavior ?? 'show_picker',
     triggerTemplate: zone.trigger?.template ?? '',
     triggerAgent: agent === undefined ? 'claude-code' : isAgenticToolName(agent) ? agent : null,
+    triggerModelConfig: normalizeZoneModelConfig(zone.trigger?.model_config),
     borderColor: zone.borderColor,
     backgroundColor: zone.backgroundColor,
     fontSize: sanitizeZoneFontSize(zone.fontSize),
@@ -36,6 +65,8 @@ export function formatZoneConfigDraft(draft: ZoneConfigDraft): string {
     lines.push(
       `When a branch enters: ${draft.triggerBehavior}`,
       ...(draft.triggerAgent ? [`Agent: ${draft.triggerAgent}`] : []),
+      ...(draft.triggerModelConfig?.model ? [`Model: ${draft.triggerModelConfig.model}`] : []),
+      ...(draft.triggerModelConfig?.effort ? [`Effort: ${draft.triggerModelConfig.effort}`] : []),
       'Prompt template:',
       draft.triggerTemplate
     );
@@ -72,13 +103,19 @@ export function applyZoneConfigDraft(
   const templateChanged = draft.triggerTemplate !== initial.triggerTemplate;
   const behaviorChanged = draft.triggerBehavior !== initial.triggerBehavior;
   const agentChanged = draft.triggerAgent !== initial.triggerAgent;
-  if (templateChanged || behaviorChanged || agentChanged) {
+  const draftModelConfig = normalizeZoneModelConfig(draft.triggerModelConfig);
+  const modelConfigChanged = !sameZoneModelConfig(draftModelConfig, initial.triggerModelConfig);
+  if (templateChanged || behaviorChanged || agentChanged || modelConfigChanged) {
     const template = templateChanged
       ? draft.triggerTemplate.trim()
       : (zone.trigger?.template ?? '');
+    // Model ids are tool-specific: a new agent never keeps another agent's model.
+    const modelConfig =
+      agentChanged || modelConfigChanged ? draftModelConfig : zone.trigger?.model_config;
+    const { model_config: _replaced, ...rest } = zone.trigger ?? ({} as Partial<ZoneTrigger>);
     changes.trigger = template
       ? {
-          ...zone.trigger,
+          ...rest,
           template,
           behavior: behaviorChanged
             ? draft.triggerBehavior
@@ -86,6 +123,7 @@ export function applyZoneConfigDraft(
           agent: agentChanged
             ? (draft.triggerAgent ?? undefined)
             : (zone.trigger?.agent ?? draft.triggerAgent ?? undefined),
+          ...(modelConfig && { model_config: modelConfig }),
         }
       : undefined;
   }

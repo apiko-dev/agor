@@ -128,6 +128,60 @@ describe('zone configuration draft merge', () => {
   });
 });
 
+describe('zone trigger model and effort draft', () => {
+  const modelZone: ZoneBoardObject = {
+    ...zone,
+    trigger: {
+      behavior: 'always_new',
+      template: 'Old prompt',
+      agent: 'claude-code',
+      model_config: { mode: 'alias', model: 'claude-opus-4-6', effort: 'high' },
+    },
+  };
+  const initial = createZoneConfigDraft(modelZone, modelZone.label);
+
+  it('keeps the stored model and effort when other fields are edited', () => {
+    expect(initial.triggerModelConfig).toEqual(modelZone.trigger?.model_config);
+    expect(
+      applyZoneConfigDraft(modelZone, initial, { ...initial, triggerTemplate: 'New prompt' })
+        ?.trigger
+    ).toEqual({ ...modelZone.trigger, template: 'New prompt' });
+  });
+
+  it('writes an effort-only selection and removes a cleared one', () => {
+    const effortOnly = applyZoneConfigDraft(modelZone, initial, {
+      ...initial,
+      triggerModelConfig: { mode: 'alias', model: '  ', effort: 'max' },
+    });
+    expect(effortOnly?.trigger?.model_config).toEqual({ effort: 'max' });
+
+    const cleared = applyZoneConfigDraft(modelZone, initial, {
+      ...initial,
+      triggerModelConfig: undefined,
+    });
+    expect(cleared?.trigger).toBeDefined();
+    expect(cleared?.trigger).not.toHaveProperty('model_config');
+  });
+
+  it("drops another agent's model when the agent changes", () => {
+    const remote: ZoneBoardObject = {
+      ...modelZone,
+      trigger: { ...modelZone.trigger!, model_config: { model: 'claude-sonnet-4-6' } },
+    };
+    const switched = applyZoneConfigDraft(remote, initial, {
+      ...initial,
+      triggerAgent: 'codex',
+      triggerModelConfig: undefined,
+    });
+    expect(switched?.trigger).toMatchObject({ agent: 'codex' });
+    expect(switched?.trigger).not.toHaveProperty('model_config');
+  });
+
+  it('lists the model and effort in a copied draft', () => {
+    expect(formatZoneConfigDraft(initial)).toContain('Model: claude-opus-4-6\nEffort: high');
+  });
+});
+
 describe('zone configuration draft copy', () => {
   it('formats every field a refused draft carries', () => {
     expect(formatZoneConfigDraft(createZoneConfigDraft(zone, zone.label))).toBe(
