@@ -219,6 +219,7 @@ import {
   type PermissionDecisionSubmission,
 } from './permissions/deliver-permission-decision.js';
 import { userScopedAuthorizationInvalidation } from './realtime/routing.js';
+import { registerTeammateWebhookIngressRoute } from './routes/teammate-webhook-ingress.js';
 import { registerTeamsGatewayIngressRoute } from './routes/teams-gateway-ingress.js';
 import { publicBoardCommentRepositionInput } from './services/board-comments.js';
 import type { GatewayService } from './services/gateway.js';
@@ -1023,6 +1024,7 @@ export async function registerRoutes(ctx: RegisterRoutesContext): Promise<void> 
 
   registerExecutorResponseRoutes(app);
   registerTeamsGatewayIngressRoute({ app, db });
+  registerTeammateWebhookIngressRoute({ app, db });
 
   // Health and launch auth share the exact startup-resolved provider. The
   // public DTO is immutable and contains no verification or exchange secrets.
