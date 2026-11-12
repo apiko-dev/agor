@@ -138,29 +138,59 @@ sudo systemctl restart agor
 
 ## Develop the fork
 
-Install dependencies once:
+Dev mode runs the daemon and the UI from source and reloads them on every change. Give it its own database, env file and state folder, so it never touches an installed Agor's data.
+
+Create a database and a user for dev mode, the same way as in [Run Agor](#run-agor), for example `agor_dev`:
 
 ```bash
-pnpm install
+psql -h localhost -U postgres -c "CREATE USER agor_dev WITH PASSWORD 'change-me';" -c "CREATE DATABASE agor_dev OWNER agor_dev;"
+```
+
+Create a dev env file from the example:
+
+```bash
+cp scripts/apiko/agor.env.example ~/.config/agor/agor-dev.env && chmod 600 ~/.config/agor/agor-dev.env
+```
+
+In `~/.config/agor/agor-dev.env`, set `DATABASE_URL` to the dev database and `AGOR_ADMIN_PASSWORD` to a new password. Then add a line with the state folder, so dev mode keeps its `config.yaml` out of `~/.agor`:
+
+```bash
+AGOR_HOME=$HOME/.agor-dev
+```
+
+Install dependencies, build `@agor/core`, create the config and run the migrations. Do this once, and run the migrations again after a pull that adds new ones:
+
+```bash
+pnpm install && pnpm --filter @agor/core build
+```
+
+```bash
+AGOR_ENV_FILE=~/.config/agor/agor-dev.env scripts/apiko/run.sh node scripts/apiko/ensure-config.mjs
+```
+
+```bash
+AGOR_ENV_FILE=~/.config/agor/agor-dev.env scripts/apiko/run.sh pnpm agor db migrate --yes
 ```
 
 Run the daemon and the UI in watch mode, in two terminals:
 
 ```bash
-cd apps/agor-daemon && pnpm dev
+AGOR_ENV_FILE=~/.config/agor/agor-dev.env scripts/apiko/run.sh pnpm --dir apps/agor-daemon dev
 ```
 
 ```bash
-cd apps/agor-ui && pnpm dev
+pnpm --dir apps/agor-ui dev
 ```
 
-Open http://localhost:5173. The daemon restarts on changes to `@agor/core` and the daemon. The UI reloads in place.
-
-Dev mode uses whatever database your shell's environment points to. Without `AGOR_DB_DIALECT` and `DATABASE_URL`, it uses SQLite at `~/.agor/agor.db`. Dev mode also uses `~/.agor` and port 3030, the same as the installed Agor. So stop the installed daemon first, or give dev mode its own state, port and database:
+Open http://localhost:5173 and sign in as `admin@agor.live` with the `AGOR_ADMIN_PASSWORD` from your dev env file. If that variable was empty on the first start, the daemon generated a password and wrote it to `~/.agor-dev/admin-credentials`. Either way, Agor reads it only once, when the database has no users. On macOS, to copy the password without printing it:
 
 ```bash
-export AGOR_HOME=~/.agor-dev PORT=3031 VITE_DAEMON_PORT=3031
+grep '^AGOR_ADMIN_PASSWORD=' ~/.config/agor/agor-dev.env | cut -d= -f2- | tr -d '\n' | pbcopy
 ```
+
+The daemon restarts on changes to `@agor/core` and the daemon. The UI reloads in place.
+
+Dev mode listens on port 3030, the same as the installed Agor, so stop the installed daemon first. To run both, set `DAEMON_PORT=3031` in the dev env file, and start the UI with `VITE_DAEMON_PORT=3031 pnpm --dir apps/agor-ui dev`.
 
 Before you open a PR, run the repo's checks:
 
