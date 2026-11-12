@@ -86,6 +86,25 @@ export function formatZoneConfigDraft(draft: ZoneConfigDraft): string {
  * empty strings/undefined resets are edits too. This preserves received live
  * updates; it does not provide server-side compare-and-swap for in-flight writes.
  */
+/**
+ * A zone without a prompt is organizational-only and stores no trigger, so
+ * trigger settings changed alongside an empty prompt would be lost on save.
+ */
+export function zoneDraftDropsTriggerSettings(
+  initial: ZoneConfigDraft,
+  draft: ZoneConfigDraft
+): boolean {
+  if (draft.triggerTemplate.trim()) return false;
+  return (
+    draft.triggerBehavior !== initial.triggerBehavior ||
+    draft.triggerAgent !== initial.triggerAgent ||
+    !sameZoneModelConfig(
+      normalizeZoneModelConfig(draft.triggerModelConfig),
+      initial.triggerModelConfig
+    )
+  );
+}
+
 export function applyZoneConfigDraft(
   zone: ZoneBoardObject,
   initial: ZoneConfigDraft,

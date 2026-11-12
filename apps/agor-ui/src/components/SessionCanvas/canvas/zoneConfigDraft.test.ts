@@ -5,6 +5,7 @@ import {
   applyZoneConfigDraft,
   createZoneConfigDraft,
   formatZoneConfigDraft,
+  zoneDraftDropsTriggerSettings,
 } from './zoneConfigDraft';
 
 const zone: ZoneBoardObject = {
@@ -200,6 +201,48 @@ describe('zone configuration draft copy', () => {
     const plain = { ...zone, trigger: undefined, borderColor: undefined, fontSize: undefined };
     expect(formatZoneConfigDraft(createZoneConfigDraft(plain, 'Plain'))).toBe(
       ['Name: Plain', 'Prompt template: (none)', 'Locked: yes', 'Fill color: #abcdef'].join('\n')
+    );
+  });
+});
+
+describe('zone trigger settings without a prompt', () => {
+  const organizational: ZoneBoardObject = { ...zone, trigger: undefined };
+  const initial = createZoneConfigDraft(organizational, organizational.label);
+
+  it('flags agent, model and effort picked for a zone that has no prompt', () => {
+    const draft = {
+      ...initial,
+      triggerBehavior: 'always_new' as const,
+      triggerModelConfig: {
+        mode: 'alias' as const,
+        model: 'claude-fable-5-2',
+        effort: 'high' as const,
+      },
+    };
+    expect(applyZoneConfigDraft(organizational, initial, draft)?.trigger).toBeUndefined();
+    expect(zoneDraftDropsTriggerSettings(initial, draft)).toBe(true);
+  });
+
+  it('allows the same settings once a prompt is set, and allows untouched settings without one', () => {
+    const withPrompt = {
+      ...initial,
+      triggerTemplate: 'Review {{ branch.name }}',
+      triggerBehavior: 'always_new' as const,
+      triggerModelConfig: { effort: 'high' as const },
+    };
+    expect(zoneDraftDropsTriggerSettings(initial, withPrompt)).toBe(false);
+    expect(
+      applyZoneConfigDraft(organizational, initial, withPrompt)?.trigger?.model_config
+    ).toEqual({
+      effort: 'high',
+    });
+    expect(zoneDraftDropsTriggerSettings(initial, { ...initial, name: 'Renamed' })).toBe(false);
+  });
+
+  it('allows clearing the prompt of a zone without touching its settings', () => {
+    const triggered = createZoneConfigDraft(zone, zone.label);
+    expect(zoneDraftDropsTriggerSettings(triggered, { ...triggered, triggerTemplate: '' })).toBe(
+      false
     );
   });
 });

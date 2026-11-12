@@ -36,6 +36,7 @@ import {
   createZoneConfigDraft,
   formatZoneConfigDraft,
   type ZoneConfigDraft,
+  zoneDraftDropsTriggerSettings,
 } from './zoneConfigDraft';
 import {
   sanitizeZoneFontSize,
@@ -216,6 +217,19 @@ export const ZoneConfigModal = ({
     };
   });
 
+  const openingDraft = initialDraftRef.current?.draft;
+  const promptMissingForTrigger = Boolean(
+    open &&
+      openingDraft &&
+      zoneDraftDropsTriggerSettings(openingDraft, {
+        ...openingDraft,
+        triggerBehavior: triggerBehavior ?? openingDraft.triggerBehavior,
+        triggerTemplate: triggerTemplate ?? openingDraft.triggerTemplate,
+        triggerAgent,
+        triggerModelConfig,
+      })
+  );
+
   const handleBorderColorChange = (color: Color) => {
     // Introducing borderColor changes the renderer's fallback semantics. Keep
     // the legacy `color` fill translucent by materializing it before saving.
@@ -242,7 +256,8 @@ export const ZoneConfigModal = ({
       !mutationGate.canMutate ||
       !canEdit ||
       requiresSupportedToolSelection ||
-      triggerAgent === null
+      triggerAgent === null ||
+      promptMissingForTrigger
     )
       return;
     const initial = initialDraftRef.current;
@@ -511,7 +526,12 @@ export const ZoneConfigModal = ({
       <Form.Item
         name="triggerTemplate"
         label="Prompt template"
-        help="Leave empty to keep this as an organizational-only zone."
+        validateStatus={promptMissingForTrigger ? 'error' : undefined}
+        help={
+          promptMissingForTrigger
+            ? 'Add a prompt to save these automation settings. A zone without a prompt keeps none of them.'
+            : 'Leave empty to keep this as an organizational-only zone.'
+        }
         extra={
           <ExpandableAlert
             key={`${objectId}:${open}`}
@@ -625,7 +645,8 @@ export const ZoneConfigModal = ({
           isSaving ||
           !mutationGate.canMutate ||
           !canEdit ||
-          requiresSupportedToolSelection,
+          requiresSupportedToolSelection ||
+          promptMissingForTrigger,
       }}
       cancelText="Cancel"
       width={640}
