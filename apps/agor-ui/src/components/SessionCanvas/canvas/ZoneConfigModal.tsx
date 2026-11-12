@@ -434,7 +434,7 @@ export const ZoneConfigModal = ({
         {defaultModel && (
           <Form.Item label="Model">
             {triggerModelConfig?.model ? (
-              <Space wrap>
+              <Space wrap align="start">
                 <ModelSelector
                   agentic_tool={agent}
                   showAdvisor={false}
@@ -447,10 +447,7 @@ export const ZoneConfigModal = ({
                     if (model.trim()) updateModelConfig({ mode, model });
                   }}
                 />
-                <Button
-                  size="small"
-                  onClick={() => updateModelConfig({ mode: undefined, model: undefined })}
-                >
+                <Button onClick={() => updateModelConfig({ mode: undefined, model: undefined })}>
                   Use default
                 </Button>
               </Space>
