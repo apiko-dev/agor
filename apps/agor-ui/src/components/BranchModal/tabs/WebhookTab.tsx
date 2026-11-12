@@ -22,6 +22,7 @@ import {
   EditOutlined,
   KeyOutlined,
   PlusOutlined,
+  SyncOutlined,
   UnorderedListOutlined,
 } from '@ant-design/icons';
 import type { TableColumnsType } from 'antd';
@@ -300,7 +301,7 @@ export const WebhookTab: React.FC<WebhookTabProps> = ({
                 <Button
                   type="text"
                   size="small"
-                  icon={<KeyOutlined />}
+                  icon={<SyncOutlined />}
                   loading={issuingId === w.webhook_id}
                   aria-label={`Rotate token for webhook ${w.name}`}
                 />
