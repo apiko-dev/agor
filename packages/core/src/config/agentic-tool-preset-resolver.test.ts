@@ -10,6 +10,7 @@ import {
   runWithTenantDatabaseScope,
 } from '../db/tenant-scope';
 import { dbTest } from '../db/test-helpers';
+import { DEFAULT_CLAUDE_MODEL } from '../models/claude';
 import {
   type AgenticToolModelConfigurationPolicy,
   resolveModelConfig,
@@ -248,6 +249,49 @@ describe('agentic tool preset resolution', () => {
         model_config: { model: 'preset-model' },
       });
       expect(materialized).not.toHaveProperty('mcp_server_ids');
+    }
+  );
+
+  dbTest(
+    'layers a partial inline model selection over the execution owner defaults',
+    async ({ db }) => {
+      const owner = await new UsersRepository(db).create({
+        email: `materialized-zone-${Date.now()}-${Math.random()}@example.com`,
+        name: 'Dropping User',
+        default_agentic_config: {
+          'claude-code': {
+            permissionMode: 'acceptEdits',
+            modelConfig: { mode: 'alias', model: 'owner-model', effort: 'low' },
+          },
+        },
+      });
+      const materialize = (modelConfig?: { model?: string; effort?: 'max' }) =>
+        materializeAgenticToolConfiguration(db, {
+          tool: 'claude-code',
+          source: { configuration: { modelConfig } },
+          executionOwner: owner,
+        });
+
+      const effortOnly = await materialize({ effort: 'max' });
+      expect(effortOnly.model_config).toMatchObject({ model: 'owner-model', effort: 'max' });
+      expect(effortOnly.permission_config).toEqual({ mode: 'acceptEdits' });
+
+      const modelAndEffort = await materialize({ model: 'zone-model', effort: 'max' });
+      expect(modelAndEffort.model_config).toMatchObject({ model: 'zone-model', effort: 'max' });
+
+      const unset = await materialize(undefined);
+      expect(unset.model_config).toMatchObject({ model: 'owner-model', effort: 'low' });
+
+      const ownerWithoutModel = { ...owner, default_agentic_config: {} };
+      const toolDefault = await materializeAgenticToolConfiguration(db, {
+        tool: 'claude-code',
+        source: { configuration: { modelConfig: { effort: 'max' } } },
+        executionOwner: ownerWithoutModel,
+      });
+      expect(toolDefault.model_config).toMatchObject({
+        model: DEFAULT_CLAUDE_MODEL,
+        effort: 'max',
+      });
     }
   );
 

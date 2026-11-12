@@ -5,6 +5,7 @@ import {
   applyZoneConfigDraft,
   createZoneConfigDraft,
   formatZoneConfigDraft,
+  zoneDraftDropsTriggerSettings,
 } from './zoneConfigDraft';
 
 const zone: ZoneBoardObject = {
@@ -128,6 +129,60 @@ describe('zone configuration draft merge', () => {
   });
 });
 
+describe('zone trigger model and effort draft', () => {
+  const modelZone: ZoneBoardObject = {
+    ...zone,
+    trigger: {
+      behavior: 'always_new',
+      template: 'Old prompt',
+      agent: 'claude-code',
+      model_config: { mode: 'alias', model: 'claude-opus-4-6', effort: 'high' },
+    },
+  };
+  const initial = createZoneConfigDraft(modelZone, modelZone.label);
+
+  it('keeps the stored model and effort when other fields are edited', () => {
+    expect(initial.triggerModelConfig).toEqual(modelZone.trigger?.model_config);
+    expect(
+      applyZoneConfigDraft(modelZone, initial, { ...initial, triggerTemplate: 'New prompt' })
+        ?.trigger
+    ).toEqual({ ...modelZone.trigger, template: 'New prompt' });
+  });
+
+  it('writes an effort-only selection and removes a cleared one', () => {
+    const effortOnly = applyZoneConfigDraft(modelZone, initial, {
+      ...initial,
+      triggerModelConfig: { mode: 'alias', model: '  ', effort: 'max' },
+    });
+    expect(effortOnly?.trigger?.model_config).toEqual({ effort: 'max' });
+
+    const cleared = applyZoneConfigDraft(modelZone, initial, {
+      ...initial,
+      triggerModelConfig: undefined,
+    });
+    expect(cleared?.trigger).toBeDefined();
+    expect(cleared?.trigger).not.toHaveProperty('model_config');
+  });
+
+  it("drops another agent's model when the agent changes", () => {
+    const remote: ZoneBoardObject = {
+      ...modelZone,
+      trigger: { ...modelZone.trigger!, model_config: { model: 'claude-sonnet-4-6' } },
+    };
+    const switched = applyZoneConfigDraft(remote, initial, {
+      ...initial,
+      triggerAgent: 'codex',
+      triggerModelConfig: undefined,
+    });
+    expect(switched?.trigger).toMatchObject({ agent: 'codex' });
+    expect(switched?.trigger).not.toHaveProperty('model_config');
+  });
+
+  it('lists the model and effort in a copied draft', () => {
+    expect(formatZoneConfigDraft(initial)).toContain('Model: claude-opus-4-6\nEffort: high');
+  });
+});
+
 describe('zone configuration draft copy', () => {
   it('formats every field a refused draft carries', () => {
     expect(formatZoneConfigDraft(createZoneConfigDraft(zone, zone.label))).toBe(
@@ -146,6 +201,48 @@ describe('zone configuration draft copy', () => {
     const plain = { ...zone, trigger: undefined, borderColor: undefined, fontSize: undefined };
     expect(formatZoneConfigDraft(createZoneConfigDraft(plain, 'Plain'))).toBe(
       ['Name: Plain', 'Prompt template: (none)', 'Locked: yes', 'Fill color: #abcdef'].join('\n')
+    );
+  });
+});
+
+describe('zone trigger settings without a prompt', () => {
+  const organizational: ZoneBoardObject = { ...zone, trigger: undefined };
+  const initial = createZoneConfigDraft(organizational, organizational.label);
+
+  it('flags agent, model and effort picked for a zone that has no prompt', () => {
+    const draft = {
+      ...initial,
+      triggerBehavior: 'always_new' as const,
+      triggerModelConfig: {
+        mode: 'alias' as const,
+        model: 'claude-fable-5-2',
+        effort: 'high' as const,
+      },
+    };
+    expect(applyZoneConfigDraft(organizational, initial, draft)?.trigger).toBeUndefined();
+    expect(zoneDraftDropsTriggerSettings(initial, draft)).toBe(true);
+  });
+
+  it('allows the same settings once a prompt is set, and allows untouched settings without one', () => {
+    const withPrompt = {
+      ...initial,
+      triggerTemplate: 'Review {{ branch.name }}',
+      triggerBehavior: 'always_new' as const,
+      triggerModelConfig: { effort: 'high' as const },
+    };
+    expect(zoneDraftDropsTriggerSettings(initial, withPrompt)).toBe(false);
+    expect(
+      applyZoneConfigDraft(organizational, initial, withPrompt)?.trigger?.model_config
+    ).toEqual({
+      effort: 'high',
+    });
+    expect(zoneDraftDropsTriggerSettings(initial, { ...initial, name: 'Renamed' })).toBe(false);
+  });
+
+  it('allows clearing the prompt of a zone without touching its settings', () => {
+    const triggered = createZoneConfigDraft(zone, zone.label);
+    expect(zoneDraftDropsTriggerSettings(triggered, { ...triggered, triggerTemplate: '' })).toBe(
+      false
     );
   });
 });

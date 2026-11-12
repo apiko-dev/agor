@@ -2,8 +2,9 @@
  * Modal for configuring zone identity, appearance, placement, and automation.
  */
 
-import type { AgenticToolName, BoardObject } from '@agor-live/client';
-import { isAgenticToolName } from '@agor-live/client';
+import { AGENTIC_TOOL_CAPABILITIES } from '@agor/agentic-tools';
+import type { AgenticToolName, BoardObject, ZoneTriggerModelConfig } from '@agor-live/client';
+import { getDefaultModelForTool, isAgenticToolName } from '@agor-live/client';
 import {
   Alert,
   Button,
@@ -25,7 +26,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useMutationGate } from '../../../contexts/ConnectionContext';
 import type { BoardWriteResult } from '../../../hooks/useBoardMutationGuard';
 import { AgentSelectionGrid, AVAILABLE_AGENTS } from '../../AgentSelectionGrid';
+import { EffortSelector } from '../../EffortSelector';
 import { ExpandableAlert } from '../../ExpandableAlert';
+import { ModelSelector } from '../../ModelSelector';
 import { STALE_DRAFT_TITLE, useCopyDraft } from './staleDraft';
 import { toTranslucentZoneFill, ZONE_CONTENT_OPACITY } from './zoneAppearance';
 import {
@@ -33,6 +36,7 @@ import {
   createZoneConfigDraft,
   formatZoneConfigDraft,
   type ZoneConfigDraft,
+  zoneDraftDropsTriggerSettings,
 } from './zoneConfigDraft';
 import {
   sanitizeZoneFontSize,
@@ -85,6 +89,7 @@ export const ZoneConfigModal = ({
   const { token } = theme.useToken();
   const [form] = Form.useForm<ZoneFormValues>();
   const [triggerAgent, setTriggerAgent] = useState<AgenticToolName | null>('claude-code');
+  const [triggerModelConfig, setTriggerModelConfig] = useState<ZoneTriggerModelConfig>();
   const [borderColor, setBorderColor] = useState<string | undefined>();
   const [backgroundColor, setBackgroundColor] = useState<string | undefined>();
   const [fontSize, setFontSize] = useState<number | undefined>();
@@ -143,6 +148,7 @@ export const ZoneConfigModal = ({
       setFontSize(draft.fontSize);
       setClearLegacyColor(false);
       setTriggerAgent(draft.triggerAgent);
+      setTriggerModelConfig(draft.triggerModelConfig);
       setStale(false);
     } else if (!open) {
       initialDraftRef.current = null;
@@ -188,6 +194,7 @@ export const ZoneConfigModal = ({
       triggerBehavior: values.triggerBehavior ?? initial.draft.triggerBehavior,
       triggerTemplate: values.triggerTemplate ?? initial.draft.triggerTemplate,
       triggerAgent,
+      triggerModelConfig,
       borderColor,
       backgroundColor,
       fontSize,
@@ -209,6 +216,19 @@ export const ZoneConfigModal = ({
       draftReaderRef.current = null;
     };
   });
+
+  const openingDraft = initialDraftRef.current?.draft;
+  const promptMissingForTrigger = Boolean(
+    open &&
+      openingDraft &&
+      zoneDraftDropsTriggerSettings(openingDraft, {
+        ...openingDraft,
+        triggerBehavior: triggerBehavior ?? openingDraft.triggerBehavior,
+        triggerTemplate: triggerTemplate ?? openingDraft.triggerTemplate,
+        triggerAgent,
+        triggerModelConfig,
+      })
+  );
 
   const handleBorderColorChange = (color: Color) => {
     // Introducing borderColor changes the renderer's fallback semantics. Keep
@@ -236,7 +256,8 @@ export const ZoneConfigModal = ({
       !mutationGate.canMutate ||
       !canEdit ||
       requiresSupportedToolSelection ||
-      triggerAgent === null
+      triggerAgent === null ||
+      promptMissingForTrigger
     )
       return;
     const initial = initialDraftRef.current;
@@ -262,6 +283,7 @@ export const ZoneConfigModal = ({
         name: values.name ?? initial.draft.name,
         locked: values.locked ?? initial.draft.locked,
         triggerAgent,
+        triggerModelConfig,
         borderColor,
         backgroundColor,
         fontSize,
@@ -413,6 +435,67 @@ export const ZoneConfigModal = ({
     </>
   );
 
+  const updateModelConfig = (changes: Partial<ZoneTriggerModelConfig>) =>
+    setTriggerModelConfig((current) => {
+      const next = { ...current, ...changes };
+      return next.model || next.effort ? next : undefined;
+    });
+
+  const zoneModelControls = (agent: AgenticToolName) => {
+    const defaultModel = getDefaultModelForTool(agent);
+    const effortLevels = AGENTIC_TOOL_CAPABILITIES[agent].reasoningEffortLevels;
+    return (
+      <>
+        {defaultModel && (
+          <Form.Item label="Model">
+            {triggerModelConfig?.model ? (
+              <Space wrap align="start">
+                <ModelSelector
+                  agentic_tool={agent}
+                  showAdvisor={false}
+                  value={{
+                    mode: triggerModelConfig.mode ?? 'alias',
+                    model: triggerModelConfig.model,
+                  }}
+                  // A pinned id being retyped is briefly empty; keep the picker open.
+                  onChange={({ mode, model }) => {
+                    if (model.trim()) updateModelConfig({ mode, model });
+                  }}
+                />
+                <Button onClick={() => updateModelConfig({ mode: undefined, model: undefined })}>
+                  Use default
+                </Button>
+              </Space>
+            ) : (
+              <Space wrap>
+                <Typography.Text type="secondary">Dropping user's default</Typography.Text>
+                <Button
+                  size="small"
+                  onClick={() => updateModelConfig({ mode: 'alias', model: defaultModel })}
+                >
+                  Choose model
+                </Button>
+              </Space>
+            )}
+          </Form.Item>
+        )}
+        {effortLevels && (
+          <Form.Item
+            label="Reasoning effort"
+            help="Clear to use the dropping user's default effort."
+          >
+            <EffortSelector
+              levels={effortLevels}
+              allowInherited
+              value={triggerModelConfig?.effort}
+              onChange={(effort) => updateModelConfig({ effort })}
+            />
+          </Form.Item>
+        )}
+      </>
+    );
+  };
+
   const automationContent = (
     <>
       <Typography.Paragraph>
@@ -443,7 +526,12 @@ export const ZoneConfigModal = ({
       <Form.Item
         name="triggerTemplate"
         label="Prompt template"
-        help="Leave empty to keep this as an organizational-only zone."
+        validateStatus={promptMissingForTrigger ? 'error' : undefined}
+        help={
+          promptMissingForTrigger
+            ? 'Add a prompt to save these automation settings. A zone without a prompt keeps none of them.'
+            : 'Leave empty to keep this as an organizational-only zone.'
+        }
         extra={
           <ExpandableAlert
             key={`${objectId}:${open}`}
@@ -511,19 +599,28 @@ export const ZoneConfigModal = ({
       </Form.Item>
 
       {(triggerBehavior === 'always_new' || requiresSupportedToolSelection) && (
-        <Form.Item
-          label="Agent"
-          help="New sessions will use the dropping user's default configuration for this agent."
-        >
-          <AgentSelectionGrid
-            agents={AVAILABLE_AGENTS}
-            selectedAgentId={triggerAgent}
-            onSelect={(id) => setTriggerAgent(id as AgenticToolName)}
-            columns={2}
-            showHelperText={false}
-            showComparisonLink={false}
-          />
-        </Form.Item>
+        <>
+          <Form.Item
+            label="Agent"
+            help="Anything you leave unset uses the dropping user's default for this agent."
+            style={{ marginBottom: 16 }}
+          >
+            <AgentSelectionGrid
+              agents={AVAILABLE_AGENTS}
+              selectedAgentId={triggerAgent}
+              onSelect={(id) => {
+                const agent = id as AgenticToolName;
+                // Model ids and effort levels are tool-specific.
+                if (agent !== triggerAgent) setTriggerModelConfig(undefined);
+                setTriggerAgent(agent);
+              }}
+              columns={2}
+              showHelperText={false}
+              showComparisonLink={false}
+            />
+          </Form.Item>
+          {triggerAgent && zoneModelControls(triggerAgent)}
+        </>
       )}
     </>
   );
@@ -548,7 +645,8 @@ export const ZoneConfigModal = ({
           isSaving ||
           !mutationGate.canMutate ||
           !canEdit ||
-          requiresSupportedToolSelection,
+          requiresSupportedToolSelection ||
+          promptMissingForTrigger,
       }}
       cancelText="Cancel"
       width={640}

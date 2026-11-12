@@ -76,7 +76,7 @@ When you drop a branch into a zone:
 
 1. **Session selection**: which session gets the prompt?
    - **Show picker** (default): choose a session and action when the branch is dropped
-   - **Always new**: create a new root session automatically
+   - **Always new**: create a new root session automatically. Pick the agent, and optionally a model and reasoning effort, for those sessions. Anything you leave unset uses the default of the person who dropped the branch. Setting only an effort keeps their default model. Changing the agent clears the model and effort.
 
 2. **Templated prompt executes**: the zone's Handlebars template renders with dynamic data from the branch, board, repo, and environment.
 
