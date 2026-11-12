@@ -502,6 +502,18 @@
       "import": "./dist/local-actions/index.js",
       "default": "./dist/local-actions/index.js"
     },
+    "./templates/teammate-webhook-prompt": {
+      "source": "./src/templates/teammate-webhook-prompt.ts",
+      "types": "./dist/templates/teammate-webhook-prompt.d.ts",
+      "import": "./dist/templates/teammate-webhook-prompt.js",
+      "default": "./dist/templates/teammate-webhook-prompt.js"
+    },
+    "./templates/untrusted-encoding": {
+      "source": "./src/templates/untrusted-encoding.ts",
+      "types": "./dist/templates/untrusted-encoding.d.ts",
+      "import": "./dist/templates/untrusted-encoding.js",
+      "default": "./dist/templates/untrusted-encoding.js"
+    },
     "./templates/teammate-welcome-note": {
       "source": "./src/templates/teammate-welcome-note.ts",
       "types": "./dist/templates/teammate-welcome-note.d.ts",

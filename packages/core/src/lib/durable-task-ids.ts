@@ -4,7 +4,13 @@
  * sort before turns that ran earlier in its Session.
  */
 import { createHash } from 'node:crypto';
-import type { GatewayInboundEventID, MessageID, SessionID, TaskID } from '../types';
+import type {
+  GatewayInboundEventID,
+  MessageID,
+  SessionID,
+  TaskID,
+  TeammateWebhookDeliveryID,
+} from '../types';
 
 function stableTaskId(sourceId: string, domain: string, discriminator = ''): TaskID {
   const digest = createHash('sha256')
@@ -36,4 +42,14 @@ export function gatewayInboundTaskId(eventId: GatewayInboundEventID): TaskID {
 /** Stable first-Session identity if listener recovery repeats initial admission. */
 export function gatewayInboundSessionId(eventId: GatewayInboundEventID): SessionID {
   return stableTaskId(eventId, 'gateway_inbound_session') as unknown as SessionID;
+}
+
+/** Stable first Session for one admitted webhook delivery; crash recovery converges on it. */
+export function teammateWebhookSessionId(deliveryId: TeammateWebhookDeliveryID): SessionID {
+  return stableTaskId(deliveryId, 'teammate_webhook_session') as unknown as SessionID;
+}
+
+/** Stable first prompt Task for one admitted webhook delivery, passed as idempotencyTaskId. */
+export function teammateWebhookTaskId(deliveryId: TeammateWebhookDeliveryID): TaskID {
+  return stableTaskId(deliveryId, 'teammate_webhook_prompt');
 }

@@ -29,6 +29,8 @@ export {
   completionCallbackTaskId,
   gatewayInboundSessionId,
   gatewayInboundTaskId,
+  teammateWebhookSessionId,
+  teammateWebhookTaskId,
   widgetAutoResumeTaskId,
 } from './durable-task-ids';
 export { findByShortIdPrefix, SHORT_ID_LENGTH, shortId, toShortId, URL_SHORT_ID_LENGTH };
