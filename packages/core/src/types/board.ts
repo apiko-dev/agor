@@ -2,6 +2,7 @@ import type { PersistedAgenticToolName } from './agentic-tool';
 import type { BranchPermissionLevel } from './branch';
 import type { CardID } from './card';
 import type { ArtifactID, BoardID, BranchID } from './id';
+import type { EffortLevel } from './session';
 
 /**
  * Canvas position (x/y coordinates in board space)
@@ -99,6 +100,20 @@ export interface ZoneTrigger {
    * Runtime trigger paths must narrow it to an active tool before execution.
    */
   agent?: PersistedAgenticToolName;
+  /**
+   * Model and effort for sessions this zone creates. Applies to `agent` only.
+   * Resolved like an explicit session config: a zone model replaces the
+   * dropping user's model config; an effort-only config keeps the user's
+   * (or tool) default model and applies this effort.
+   */
+  model_config?: ZoneTriggerModelConfig;
+}
+
+/** Partial model selection persisted on a zone trigger. Unset fields use the dropping user's defaults. */
+export interface ZoneTriggerModelConfig {
+  mode?: 'alias' | 'exact';
+  model?: string;
+  effort?: EffortLevel;
 }
 
 /**

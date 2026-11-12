@@ -1,5 +1,6 @@
 // biome-ignore-all lint/plugin/noHardcodedColorLiteral: persisted color fixtures verify legacy zone migration
 import type { BoardObject, ZoneBoardObject } from '@agor-live/client';
+import { DEFAULT_CLAUDE_MODEL } from '@agor-live/client';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App as AntdApp } from 'antd';
 import { describe, expect, it, vi } from 'vitest';
@@ -565,5 +566,64 @@ describe('ZoneConfigModal draft and save lifecycle', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(v.onUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('ZoneConfigModal model and effort', () => {
+  const effortZone = (): BoardObject => ({
+    type: 'zone',
+    x: 0,
+    y: 0,
+    width: 200,
+    height: 100,
+    label: 'Review',
+    trigger: {
+      behavior: 'always_new',
+      template: 'Review this branch',
+      agent: 'claude-code',
+      model_config: { effort: 'high' },
+    },
+  });
+  const renderModal = (onUpdate: ReturnType<typeof vi.fn>) =>
+    render(
+      <AntdApp>
+        <ZoneConfigModal
+          open
+          onCancel={vi.fn()}
+          zoneName="Review"
+          objectId="zone-1"
+          onUpdate={onUpdate}
+          zoneData={effortZone()}
+        />
+      </AntdApp>
+    );
+
+  it("saves a chosen model alongside the zone's effort", async () => {
+    const onUpdate = vi.fn();
+    renderModal(onUpdate);
+
+    expect(await screen.findByText("Dropping user's default")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose model' }));
+    expect(screen.queryByText("Dropping user's default")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+    expect(onUpdate.mock.calls[0][1].trigger.model_config).toEqual({
+      mode: 'alias',
+      model: DEFAULT_CLAUDE_MODEL,
+      effort: 'high',
+    });
+  });
+
+  it('clears the model and effort when the agent changes', async () => {
+    const onUpdate = vi.fn();
+    renderModal(onUpdate);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Codex' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onUpdate).toHaveBeenCalledTimes(1));
+    expect(onUpdate.mock.calls[0][1].trigger).toMatchObject({ agent: 'codex' });
+    expect(onUpdate.mock.calls[0][1].trigger).not.toHaveProperty('model_config');
   });
 });

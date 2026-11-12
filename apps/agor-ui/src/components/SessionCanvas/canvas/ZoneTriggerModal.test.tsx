@@ -819,3 +819,69 @@ describe('ZoneTriggerModal reasoning effort', () => {
     }
   );
 });
+
+describe('ZoneTriggerModal zone model and effort', () => {
+  const renderPicker = (onExecute: ReturnType<typeof vi.fn>) => {
+    const codexSession = {
+      ...makeSession('s-codex', 'completed', '2026-06-20T00:00:00.000Z', 'Codex session'),
+      agentic_tool: 'codex',
+      model_config: { mode: 'alias', model: 'gpt-6-sol', effort: 'medium' },
+    } as unknown as Session;
+    render(
+      <ZoneTriggerModal
+        actionId={1}
+        open
+        onCancel={() => {}}
+        client={null}
+        branch={undefined}
+        sessions={[codexSession]}
+        zoneName="Zone"
+        trigger={
+          {
+            template: 'prompt',
+            behavior: 'show_picker',
+            agent: 'codex',
+            model_config: { mode: 'exact', model: 'gpt-zone', effort: 'xhigh' },
+          } as never
+        }
+        availableAgents={[
+          { id: 'codex', name: 'Codex' } as never,
+          { id: 'claude-code', name: 'Claude Code' } as never,
+        ]}
+        mcpServerById={new Map()}
+        onExecute={onExecute}
+      />
+    );
+    fireEvent.click(screen.getByText('Create a new session'));
+  };
+
+  it("prefills a new session for the zone's agent with the zone's model and effort", async () => {
+    const onExecute = vi.fn().mockResolvedValue(undefined);
+    renderPicker(onExecute);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Execute Trigger' }));
+
+    await waitFor(() =>
+      expect(onExecute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent: 'codex',
+          modelConfig: { mode: 'exact', model: 'gpt-zone', effort: 'xhigh' },
+        })
+      )
+    );
+  });
+
+  it("ignores the zone's model and effort for another agent", async () => {
+    const onExecute = vi.fn().mockResolvedValue(undefined);
+    renderPicker(onExecute);
+
+    fireEvent.click(screen.getByRole('button', { name: 'claude-code' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Execute Trigger' }));
+
+    await waitFor(() =>
+      expect(onExecute).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: 'claude-code', modelConfig: undefined })
+      )
+    );
+  });
+});

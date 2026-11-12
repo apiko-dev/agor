@@ -209,12 +209,23 @@ const ZoneTriggerModalAction = ({
       const recentAgentSession =
         mostRecentSession?.agentic_tool === selectedAgent ? mostRecentSession : undefined;
 
-      // Calculate config values (priority: most recent session > user defaults)
+      // The zone's own model/effort belong to the zone's agent only.
+      const zoneModelConfig =
+        selectedAgent === (initial.trigger.agent ?? 'claude-code')
+          ? initial.trigger.model_config
+          : undefined;
+
+      // Priority: zone > most recent session > user defaults
       const configValues = {
         permissionMode:
           recentAgentSession?.permission_config?.mode || agentDefaults?.permissionMode,
-        modelConfig: recentAgentSession?.model_config || agentDefaults?.modelConfig,
-        effort: recentAgentSession?.model_config?.effort ?? agentDefaults?.modelConfig?.effort,
+        modelConfig: zoneModelConfig?.model
+          ? { mode: zoneModelConfig.mode ?? 'alias', model: zoneModelConfig.model }
+          : recentAgentSession?.model_config || agentDefaults?.modelConfig,
+        effort:
+          zoneModelConfig?.effort ??
+          recentAgentSession?.model_config?.effort ??
+          agentDefaults?.modelConfig?.effort,
         mcpServerIds: form.getFieldValue('mcpServerIds'),
       };
 

@@ -21,6 +21,7 @@ import type {
   Session,
   Task,
   User,
+  ZoneTriggerModelConfig,
 } from '@agor/core/types';
 import { assertExecutionHomeKeySatisfiesMode } from '@agor/core/unix';
 import { requireActiveAgenticTool } from '../utils/agentic-tool-runtime.js';
@@ -35,7 +36,12 @@ export interface FireAlwaysNewZoneTriggerInput {
   zone: {
     label?: string;
     status?: string;
-    trigger?: { template?: string; agent?: PersistedAgenticToolName; behavior?: string };
+    trigger?: {
+      template?: string;
+      agent?: PersistedAgenticToolName;
+      behavior?: string;
+      model_config?: ZoneTriggerModelConfig;
+    };
   };
   user: User;
   /** Caller's userId; stored on the new session as `created_by`. */
@@ -104,6 +110,9 @@ export async function fireAlwaysNewZoneTrigger(
     {
       branch_id: branch.branch_id,
       agentic_tool: agenticTool,
+      // An explicit partial config: the sessions service layers it over the
+      // dropping user's defaults for this tool, then the tool default.
+      ...(trigger.model_config && { model_config: trigger.model_config }),
       status: 'idle',
       description: `Session from zone "${zone.label ?? ''}"`,
       created_by: userId,

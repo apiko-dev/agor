@@ -12,6 +12,7 @@ import type {
   BoardObject,
   UserID,
   UUID,
+  ZoneBoardObject,
 } from '@agor/core/types';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
@@ -1350,6 +1351,71 @@ describe('BoardRepository board object style fields', () => {
     const { objects, skipped } = sanitizeImportedBoardObjects({
       ok: text({ color: '#fff' }),
       bad: text({ color: 'red;}' }),
+    });
+    expect(Object.keys(objects)).toEqual(['ok']);
+    expect(skipped).toMatchObject([{ object_id: 'bad', reason: 'invalid' }]);
+  });
+});
+
+describe('BoardRepository zone trigger model_config', () => {
+  const zone = (modelConfig: unknown) =>
+    ({
+      type: 'zone',
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 300,
+      label: 'Z',
+      trigger: {
+        template: 'Review {{ branch.name }}',
+        behavior: 'always_new',
+        agent: 'claude-code',
+        model_config: modelConfig,
+      },
+    }) as unknown as BoardObject;
+
+  dbTest('stores a model and effort, or an effort alone', async ({ db }) => {
+    const repo = new BoardRepository(db);
+    const board = await repo.create(createBoardData());
+    for (const modelConfig of [
+      { mode: 'alias', model: 'claude-opus-4-6', effort: 'high' },
+      { effort: 'max' },
+    ]) {
+      const updated = await repo.upsertBoardObject(board.board_id, 'zone-1', zone(modelConfig));
+      const stored = updated.objects?.['zone-1'] as ZoneBoardObject | undefined;
+      expect(stored?.trigger?.model_config).toEqual(modelConfig);
+    }
+  });
+
+  dbTest('rejects an unusable model_config on every write path', async ({ db }) => {
+    const repo = new BoardRepository(db);
+    const board = await repo.create(createBoardData());
+    for (const modelConfig of [
+      { effort: 'extreme' },
+      { model: '' },
+      { model: 'x'.repeat(201) },
+      { model: 'claude-opus-4-6', mode: 'pinned' },
+      { model: 'claude-opus-4-6', provider: 'openai' },
+      {},
+      'claude-opus-4-6',
+    ]) {
+      await expect(
+        repo.upsertBoardObject(board.board_id, 'zone-1', zone(modelConfig))
+      ).rejects.toThrow(BoardObjectValidationError);
+    }
+    await expect(
+      repo.batchUpsertBoardObjects(board.board_id, { 'zone-1': zone({ effort: 'extreme' }) })
+    ).rejects.toThrow(BoardObjectValidationError);
+    await expect(
+      repo.create(createBoardData({ objects: { 'zone-1': zone({ effort: 'extreme' }) } }))
+    ).rejects.toThrow(BoardObjectValidationError);
+    expect((await repo.findById(board.board_id))?.objects ?? {}).toEqual({});
+  });
+
+  it('skips imported zones with an unusable model_config', () => {
+    const { objects, skipped } = sanitizeImportedBoardObjects({
+      ok: zone({ effort: 'low' }),
+      bad: zone({ effort: 'extreme' }),
     });
     expect(Object.keys(objects)).toEqual(['ok']);
     expect(skipped).toMatchObject([{ object_id: 'bad', reason: 'invalid' }]);
