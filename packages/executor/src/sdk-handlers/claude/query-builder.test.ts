@@ -557,6 +557,8 @@ describe('setupQuery - live MCP reprojection', () => {
     const deps = {
       ...refreshDeps(vi.fn().mockResolvedValue(readyProjection()), reportRefresh, undefined, {
         mcp_token: 'test-token',
+        // A fresh turn applies the startup set in two steps (blocking, then full).
+        sdk_session_id: undefined,
       }),
       mcpServerRepo: {} as any,
     };
@@ -1058,6 +1060,60 @@ describe('setupQuery - Local Settings Support', () => {
     void input.next();
     await vi.waitFor(() => expect(setMcpServers).toHaveBeenCalledOnce());
   });
+
+  it.each([
+    { label: 'resume', sdkSessionId: 'sdk-session-resumed', blocking: ['remote', 'agor'] },
+    { label: 'fresh', sdkSessionId: undefined, blocking: ['agor'] },
+  ])(
+    'holds the first message for the $blocking set on a $label turn',
+    async ({ sdkSessionId, blocking }) => {
+      const deps = createMockDeps();
+      const now = new Date().toISOString();
+      vi.mocked(deps.sessionsRepo.findById).mockResolvedValue({
+        session_id: 'test-session' as SessionID,
+        branch_id: 'test-branch' as BranchID,
+        mcp_token: 'test-token',
+        sdk_session_id: sdkSessionId,
+        created_at: now,
+        last_updated: now,
+      } as any);
+      deps.sessionMCPRepo = {} as any;
+      deps.mcpServerRepo = {} as any;
+      vi.mocked(getMcpServersForSession).mockResolvedValue([
+        { server: { name: 'remote', transport: 'http', url: 'https://example.com/mcp' } } as any,
+      ]);
+      let connect!: (value: unknown) => void;
+      const setMcpServers = vi.fn(
+        (_servers: Record<string, unknown>) =>
+          new Promise((resolve) => {
+            connect = resolve;
+          })
+      );
+      claudeQuery.mockReturnValue({ setMcpServers } as any);
+
+      await setupQuery('test-session' as SessionID, 'test prompt', deps);
+      const { options, prompt } = claudeQuery.mock.calls[0][0];
+      expect(options.resume).toBe(sdkSessionId);
+
+      let released = false;
+      const input = prompt[Symbol.asyncIterator]();
+      const first = input.next().then(() => {
+        released = true;
+      });
+      await vi.waitFor(() => expect(setMcpServers).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(released).toBe(false);
+      expect(Object.keys(setMcpServers.mock.calls[0][0])).toEqual(blocking);
+      connect({ added: blocking, removed: [], errors: {} });
+      await first;
+      void input.next();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      // A resumed turn already applied everything; a fresh one adds the full set afterwards.
+      expect(setMcpServers.mock.calls.map(([servers]) => Object.keys(servers))).toEqual(
+        sdkSessionId ? [blocking] : [blocking, ['remote', 'agor']]
+      );
+    }
+  );
 
   it('applies Agor MCP even when the SDK reads the prompt before query() returns', async () => {
     const deps = createMockDeps();
