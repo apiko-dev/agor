@@ -87,6 +87,11 @@ import type {
   SessionUpdate,
   Task,
   TaskQueueMutationResult,
+  TeammateWebhook,
+  TeammateWebhookCreateData,
+  TeammateWebhookDelivery,
+  TeammateWebhookIssuedToken,
+  TeammateWebhookPatchData,
   TeammateWelcomeNoteRequest,
   TemplateRenderRequest,
   TemplateRenderResponse,
@@ -311,6 +316,8 @@ export interface ServiceTypes {
   'branch-counts': BoardBranchCount;
   'session-counts': SessionCount;
   schedules: Schedule;
+  'teammate-webhooks': TeammateWebhook;
+  'teammate-webhook-deliveries': TeammateWebhookDelivery;
   'gateway-channels': GatewayChannel;
   users: User;
   groups: Group;
@@ -413,6 +420,24 @@ export interface SchedulesService
     never,
     ClientInput<SchedulePatchData> | null
   > {}
+
+/** Teammate webhooks never carry the token; issue or rotate it through the token service. */
+export interface TeammateWebhooksService
+  extends AgorService<
+    TeammateWebhook,
+    ClientInput<TeammateWebhookCreateData>,
+    never,
+    ClientInput<TeammateWebhookPatchData> | null
+  > {}
+
+/** Issues or rotates a webhook token. The plaintext is only ever in this response. */
+export interface TeammateWebhookTokenService {
+  create(data: Record<string, never>, params?: Params): Promise<TeammateWebhookIssuedToken>;
+}
+
+/** Read-only delivery history for one webhook (`query.webhook_id` is required). */
+export interface TeammateWebhookDeliveriesService
+  extends Omit<AgorService<TeammateWebhookDelivery>, 'create' | 'update' | 'patch' | 'remove'> {}
 
 /** Gateway channels return storage-facing rows but accept active-only public write data. */
 export interface GatewayChannelsService
@@ -897,6 +922,9 @@ export interface AgorClient
   service(path: 'branches/:id/permissions'): BranchPermissionsService;
   service(path: 'workspace-preferences'): WorkspacePreferencesService;
   service(path: 'schedules'): SchedulesService;
+  service(path: 'teammate-webhooks'): TeammateWebhooksService;
+  service(path: `teammate-webhooks/${string}/token`): TeammateWebhookTokenService;
+  service(path: 'teammate-webhook-deliveries'): TeammateWebhookDeliveriesService;
   service(path: 'gateway-channels'): GatewayChannelsService;
   service(
     path: 'kb/documents'
