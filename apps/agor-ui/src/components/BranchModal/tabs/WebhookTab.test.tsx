@@ -1,4 +1,9 @@
-import type { AgorClient, TeammateWebhook, TeammateWebhookIssuedToken } from '@agor-live/client';
+import type {
+  AgorClient,
+  TeammateWebhook,
+  TeammateWebhookIssuedToken,
+  User,
+} from '@agor-live/client';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeTeammateBranch, renderWithApp } from '../testUtils';
@@ -79,10 +84,18 @@ function makeClient(webhooks: TeammateWebhook[], issueToken = vi.fn()) {
   return { client, listeners, issueToken, patch, remove };
 }
 
-function renderTab(webhooks: TeammateWebhook[], issueToken?: ReturnType<typeof vi.fn>) {
+function renderTab(
+  webhooks: TeammateWebhook[],
+  issueToken?: ReturnType<typeof vi.fn>,
+  currentUserId = 'user-1'
+) {
   const mocks = makeClient(webhooks, issueToken);
   renderWithApp(
-    <WebhookTab branch={makeTeammateBranch({ branch_id: BRANCH_ID })} client={mocks.client} />
+    <WebhookTab
+      branch={makeTeammateBranch({ branch_id: BRANCH_ID })}
+      client={mocks.client}
+      currentUser={{ user_id: currentUserId } as User}
+    />
   );
   return mocks;
 }
@@ -171,5 +184,23 @@ describe('WebhookTab', () => {
     const { patch } = renderTab([makeWebhook()]);
     fireEvent.click(await screen.findByRole('switch', { name: 'Disable webhook Jira triage' }));
     await waitFor(() => expect(patch).toHaveBeenCalledWith(WEBHOOK_ID, { enabled: false }));
+  });
+
+  it('hides creator-only controls from other users', async () => {
+    renderTab([makeWebhook()], undefined, 'user-2');
+    const toggle = await screen.findByRole('switch', {
+      name: 'Disable webhook Jira triage',
+      hidden: true,
+    });
+    expect(toggle.hasAttribute('disabled')).toBe(true);
+    expect(
+      screen.queryByRole('button', { name: 'Edit webhook Jira triage', hidden: true })
+    ).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /token for webhook Jira triage/, hidden: true })
+    ).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Delete webhook Jira triage', hidden: true })
+    ).toBeTruthy();
   });
 });

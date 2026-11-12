@@ -205,14 +205,22 @@ export const WebhookTab: React.FC<WebhookTabProps> = ({
     }
   };
 
+  // The daemon only lets the creator patch a webhook or issue its token, because runs execute as them.
+  const creatorOnlyTitle = (w: TeammateWebhook, title: string) =>
+    w.created_by === currentUser?.user_id
+      ? title
+      : `Only ${userLabel(w.created_by, userById, currentUser)} can change this webhook`;
+  const isCreator = (w: TeammateWebhook) => w.created_by === currentUser?.user_id;
+
   const columns: TableColumnsType<TeammateWebhook> = [
     {
       title: 'On',
       key: 'enabled',
       width: 50,
       render: (_, w) => (
-        <Tooltip title={w.enabled ? 'Disable webhook' : 'Enable webhook'}>
+        <Tooltip title={creatorOnlyTitle(w, w.enabled ? 'Disable webhook' : 'Enable webhook')}>
           <Switch
+            disabled={!isCreator(w)}
             aria-label={`${w.enabled ? 'Disable' : 'Enable'} webhook ${w.name}`}
             checked={w.enabled}
             onChange={(v) => handleToggleEnabled(w, v)}
@@ -279,7 +287,7 @@ export const WebhookTab: React.FC<WebhookTabProps> = ({
       width: 150,
       render: (_, w) => (
         <Space size={2} wrap={false}>
-          {w.token_hint ? (
+          {!isCreator(w) ? null : w.token_hint ? (
             <Popconfirm
               title="Rotate token?"
               description="The current token stops working immediately. Update every sender that uses it."
@@ -319,15 +327,17 @@ export const WebhookTab: React.FC<WebhookTabProps> = ({
               aria-label={`View deliveries for webhook ${w.name}`}
             />
           </Tooltip>
-          <Tooltip title="Edit">
-            <Button
-              type="text"
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => setView({ kind: 'form', webhook: w })}
-              aria-label={`Edit webhook ${w.name}`}
-            />
-          </Tooltip>
+          {isCreator(w) ? (
+            <Tooltip title="Edit">
+              <Button
+                type="text"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => setView({ kind: 'form', webhook: w })}
+                aria-label={`Edit webhook ${w.name}`}
+              />
+            </Tooltip>
+          ) : null}
           <Popconfirm
             title="Delete webhook?"
             description={`Calls to "${w.name}" will stop working.`}

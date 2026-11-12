@@ -30,7 +30,7 @@ export interface TeammateWebhookDeliveriesPanelProps {
 export function describeFailureCode(code: TeammateWebhookFailureCode): string {
   switch (code) {
     case 'webhook_disabled':
-      return 'The webhook was turned off or deleted before this call could run.';
+      return 'The webhook was turned off before this call could run.';
     case 'branch_not_teammate':
       return 'This branch is no longer a teammate.';
     case 'permission_revoked':
