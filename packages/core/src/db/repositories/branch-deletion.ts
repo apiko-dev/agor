@@ -98,6 +98,7 @@ export class BranchDeletionRepository {
       // Disable durable producers in bounded pages before touching storage.
       for (const [table, key, owner] of [
         ['schedules', 'schedule_id', 'branch_id'],
+        ['teammate_webhooks', 'webhook_id', 'branch_id'],
         ['gateway_channels', 'id', 'target_branch_id'],
       ] as const) {
         const changed = rawRows(

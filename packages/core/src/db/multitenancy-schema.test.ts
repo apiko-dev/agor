@@ -75,6 +75,9 @@ function migrationTenantTables(): string[] {
   const openCodeCheckpointMigration = readRepoFile(
     'packages/core/drizzle/postgres/0117_opencode_checkpoint_attempts.sql'
   );
+  const teammateWebhooksMigration = readRepoFile(
+    'packages/core/drizzle/postgres/0121_teammate_webhooks.sql'
+  );
   const retiredTables = retiredTenantTables();
   return [
     ...new Set(
@@ -97,6 +100,7 @@ function migrationTenantTables(): string[] {
         ...openCodeCheckpointMigration.matchAll(/CREATE TABLE "([^"]+)" \([\s\S]*?"tenant_id"/g),
         ...capabilityPoliciesMigration.matchAll(/CREATE TABLE "([^"]+)" \([\s\S]*?"tenant_id"/g),
         ...teamsGatewayHaMigration.matchAll(/CREATE TABLE "([^"]+)" \([\s\S]*?"tenant_id"/g),
+        ...teammateWebhooksMigration.matchAll(/CREATE TABLE "([^"]+)" \([\s\S]*?"tenant_id"/g),
       ]
         .map((m) => m[1])
         .filter((table) => !retiredTables.has(table))
@@ -123,6 +127,7 @@ function rlsPolicyTables(): string[] {
     readRepoFile('packages/core/drizzle/postgres/0118_teams_gateway_ha.sql'),
     readRepoFile('packages/core/drizzle/postgres/0112_kb_import_receipts.sql'),
     readRepoFile('packages/core/drizzle/postgres/0117_opencode_checkpoint_attempts.sql'),
+    readRepoFile('packages/core/drizzle/postgres/0121_teammate_webhooks.sql'),
   ].join('\n');
   const retiredTables = retiredTenantTables();
   return [
@@ -160,6 +165,29 @@ describe('Postgres multitenancy schema coverage', () => {
     expect(migration).toContain("= 'teams_message_delivery_discovery'");
     expect(migration).not.toMatch(
       /CREATE POLICY "teams_(?:gateway|message)_.*discovery"[\s\S]*WITH CHECK/
+    );
+  });
+
+  it('limits teammate webhook ingress and delivery discovery to explicit read capabilities', () => {
+    const migration = readRepoFile('packages/core/drizzle/postgres/0121_teammate_webhooks.sql');
+    const policy = (name: string) =>
+      migration.match(new RegExp(`CREATE POLICY "${name}"[\\s\\S]*?;`))?.[0] ?? '';
+    const ingress = policy('teammate_webhook_ingress_discovery');
+    const delivery = policy('teammate_webhook_delivery_discovery');
+    expect(ingress).toContain('ON "teammate_webhooks"');
+    expect(ingress).toContain('FOR SELECT');
+    expect(ingress).toContain('"enabled" = true');
+    expect(ingress).toContain("= 'teammate_webhook_ingress_discovery'");
+    expect(delivery).toContain('ON "teammate_webhook_deliveries"');
+    expect(delivery).toContain('FOR SELECT');
+    expect(delivery).toContain(`"status" IN ('queued', 'processing')`);
+    expect(delivery).toContain("= 'teammate_webhook_delivery_discovery'");
+    for (const capabilityPolicy of [ingress, delivery]) {
+      expect(capabilityPolicy).not.toContain('WITH CHECK');
+    }
+    expect(migration).toContain('ALTER TABLE "teammate_webhooks" FORCE ROW LEVEL SECURITY');
+    expect(migration).toContain(
+      'ALTER TABLE "teammate_webhook_deliveries" FORCE ROW LEVEL SECURITY'
     );
   });
 

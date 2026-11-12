@@ -1030,6 +1030,102 @@ export const schedules = sqliteTable(
 );
 
 /**
+ * Teammate webhooks: per-teammate HTTP triggers with a trusted prompt template.
+ * Only the sha256 of the bearer token is stored; repositories never project it.
+ */
+export const teammateWebhooks = sqliteTable(
+  'teammate_webhooks',
+  {
+    webhook_id: text('webhook_id', { length: 36 }).primaryKey(),
+    branch_id: text('branch_id', { length: 36 })
+      .notNull()
+      .references(() => branches.branch_id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    prompt: text('prompt').notNull(),
+    agentic_tool_config: t.json<unknown>('agentic_tool_config').notNull(),
+    agentic_tool_preset_id: text('agentic_tool_preset_id', { length: 36 }).references(
+      (): AnySQLiteColumn => agenticToolPresets.preset_id,
+      { onDelete: 'restrict' }
+    ),
+    mcp_server_ids: t.json<string[]>('mcp_server_ids'),
+    enabled: t.bool('enabled').notNull().default(true),
+    allow_concurrent_runs: t.bool('allow_concurrent_runs').notNull().default(false),
+    token_hash: text('token_hash'),
+    token_hint: text('token_hint'),
+    token_issued_at: t.timestamp('token_issued_at'),
+    created_at: t.timestamp('created_at').notNull(),
+    updated_at: t.timestamp('updated_at').notNull(),
+    created_by: text('created_by', { length: 36 })
+      .notNull()
+      .references(() => users.user_id),
+  },
+  (table) => ({
+    branchIdx: index('teammate_webhooks_branch_idx').on(table.branch_id),
+    agenticToolPresetIdx: index('teammate_webhooks_agentic_tool_preset_idx').on(
+      table.agentic_tool_preset_id
+    ),
+    createdByIdx: index('teammate_webhooks_created_by_idx').on(table.created_by),
+  })
+);
+
+/**
+ * One admitted webhook call. The row, not the session, is the unit of
+ * durability: it holds the encrypted payload until the run starts.
+ */
+export const teammateWebhookDeliveries = sqliteTable(
+  'teammate_webhook_deliveries',
+  {
+    delivery_id: text('delivery_id', { length: 36 }).primaryKey(),
+    webhook_id: text('webhook_id', { length: 36 })
+      .notNull()
+      .references(() => teammateWebhooks.webhook_id, { onDelete: 'cascade' }),
+    branch_id: text('branch_id', { length: 36 })
+      .notNull()
+      .references(() => branches.branch_id, { onDelete: 'cascade' }),
+    status: text('status', { enum: ['queued', 'processing', 'started', 'failed'] }).notNull(),
+    idempotency_key: text('idempotency_key'),
+    payload_encrypted: text('payload_encrypted'),
+    payload_bytes: integer('payload_bytes').notNull(),
+    payload_expires_at: t.timestamp('payload_expires_at').notNull(),
+    processing_token: text('processing_token'),
+    processing_expires_at: t.timestamp('processing_expires_at'),
+    attempt_count: integer('attempt_count').notNull().default(0),
+    next_attempt_at: t.timestamp('next_attempt_at').notNull(),
+    defer_reason: text('defer_reason'),
+    failure_code: text('failure_code'),
+    session_id: text('session_id', { length: 36 }).references(() => sessions.session_id, {
+      onDelete: 'set null',
+    }),
+    task_id: text('task_id', { length: 36 }).references(() => tasks.task_id, {
+      onDelete: 'set null',
+    }),
+    received_at: t.timestamp('received_at').notNull(),
+    started_at: t.timestamp('started_at'),
+    failed_at: t.timestamp('failed_at'),
+  },
+  (table) => ({
+    idempotencyUnique: uniqueIndex('teammate_webhook_deliveries_idempotency_unique')
+      .on(table.webhook_id, table.idempotency_key)
+      .where(sql`${table.idempotency_key} IS NOT NULL`),
+    dueIdx: index('teammate_webhook_deliveries_due_idx')
+      .on(table.next_attempt_at, table.delivery_id)
+      .where(sql`${table.status} IN ('queued', 'processing')`),
+    laneIdx: index('teammate_webhook_deliveries_lane_idx')
+      .on(table.webhook_id, table.received_at, table.delivery_id)
+      .where(sql`${table.status} IN ('queued', 'processing')`),
+    historyIdx: index('teammate_webhook_deliveries_history_idx').on(
+      table.webhook_id,
+      table.received_at
+    ),
+    sessionIdx: index('teammate_webhook_deliveries_session_idx').on(table.session_id),
+    retentionIdx: index('teammate_webhook_deliveries_retention_idx')
+      .on(table.received_at, table.delivery_id)
+      .where(sql`${table.status} IN ('started', 'failed')`),
+  })
+);
+
+/**
  * Users table - Authentication and authorization.
  *
  * Always present. Authentication is required for every endpoint; on first
@@ -3234,6 +3330,10 @@ export type BranchRow = typeof branches.$inferSelect;
 export type BranchInsert = typeof branches.$inferInsert;
 export type ScheduleRow = typeof schedules.$inferSelect;
 export type ScheduleInsert = typeof schedules.$inferInsert;
+export type TeammateWebhookRow = typeof teammateWebhooks.$inferSelect;
+export type TeammateWebhookInsert = typeof teammateWebhooks.$inferInsert;
+export type TeammateWebhookDeliveryRow = typeof teammateWebhookDeliveries.$inferSelect;
+export type TeammateWebhookDeliveryInsert = typeof teammateWebhookDeliveries.$inferInsert;
 export type UserRow = typeof users.$inferSelect;
 export type UserInsert = typeof users.$inferInsert;
 export type UserExternalIdentityRow = typeof userExternalIdentities.$inferSelect;

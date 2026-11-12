@@ -52,6 +52,13 @@ export const BRANCH_DELETION_DATA_STEPS: readonly DataStep[] = [
   del('gateway_inbound_events', 'id', 'gateway_channel_id IN (SELECT id FROM oc)'),
   clear('gateway_inbound_events', 'id', 'session_id', 'os'),
   clear('gateway_inbound_events', 'id', 'task_id', 'ot'),
+  del(
+    'teammate_webhook_deliveries',
+    'delivery_id',
+    'branch_id IN (SELECT id FROM ob) OR webhook_id IN (SELECT id FROM ow)'
+  ),
+  clear('teammate_webhook_deliveries', 'delivery_id', 'session_id', 'os'),
+  clear('teammate_webhook_deliveries', 'delivery_id', 'task_id', 'ot'),
   clear('gateway_outbound_messages', 'id', 'emitted_by_session_id', 'os'),
   clear('gateway_outbound_messages', 'id', 'consumed_by_session_id', 'os'),
   clear('gateway_outbound_messages', 'id', 'emitted_by_task_id', 'ot'),
@@ -112,6 +119,7 @@ export const BRANCH_DELETION_DATA_STEPS: readonly DataStep[] = [
   del('tasks', 'task_id', 'session_id IN (SELECT id FROM os)'),
   del('sessions', 'session_id', 'branch_id IN (SELECT id FROM ob)'),
   del('schedules', 'schedule_id', 'branch_id IN (SELECT id FROM ob)'),
+  del('teammate_webhooks', 'webhook_id', 'webhook_id IN (SELECT id FROM ow)'),
   clear('boards', 'board_id', 'primary_teammate_id', 'ob'),
   { ...clear('boards', 'board_id', 'primary_assistant_id', 'ob'), sqliteOnly: true },
 ];
@@ -122,6 +130,7 @@ function ownership(branchId: BranchID): SQL {
     ot AS (SELECT task_id AS id FROM tasks WHERE session_id IN (SELECT id FROM os)),
     om AS (SELECT message_id AS id FROM messages WHERE session_id IN (SELECT id FROM os)),
     oq AS (SELECT schedule_id AS id FROM schedules WHERE branch_id IN (SELECT id FROM ob)),
+    ow AS (SELECT webhook_id AS id FROM teammate_webhooks WHERE branch_id IN (SELECT id FROM ob)),
     oc AS (SELECT id FROM gateway_channels WHERE target_branch_id IN (SELECT id FROM ob)),
     ox AS (SELECT id FROM thread_session_map WHERE branch_id IN (SELECT id FROM ob)
       OR session_id IN (SELECT id FROM os) OR channel_id IN (SELECT id FROM oc)),

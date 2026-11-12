@@ -30,7 +30,10 @@ import { type SQL, sql } from 'drizzle-orm';
 import type { Database } from './client';
 import { executeRaw } from './database-wrapper';
 import { readTableJsonl, sha256Hex, type TenantArchiveTable } from './tenant-archive';
-import { buildTenantInsertOrder } from './tenant-portability-manifest';
+import {
+  buildTenantInsertOrder,
+  TENANT_IMPORT_CLEARED_COLUMNS,
+} from './tenant-portability-manifest';
 import { TENANT_WRITE_GATE_KEY, TENANT_WRITE_GATE_NAMESPACE } from './tenant-write-gate';
 
 const TENANT_SCHEMA = 'public';
@@ -85,7 +88,10 @@ function joinJsonlLines(lines: string[]): string {
  * the transformed bytes each produces cannot drift.
  */
 function rewrittenRowJsonb(elem: SQL, destinationTenantId: string, tableName: string): SQL {
-  const tenantRewritten = sql`pg_catalog.jsonb_set(${elem}, ${TENANT_ID_JSONB_PATH}::pg_catalog.text[], pg_catalog.to_jsonb(${destinationTenantId}::pg_catalog.text))`;
+  let tenantRewritten = sql`pg_catalog.jsonb_set(${elem}, ${TENANT_ID_JSONB_PATH}::pg_catalog.text[], pg_catalog.to_jsonb(${destinationTenantId}::pg_catalog.text))`;
+  for (const column of TENANT_IMPORT_CLEARED_COLUMNS[tableName] ?? []) {
+    tenantRewritten = sql`pg_catalog.jsonb_set(${tenantRewritten}, ${sql.raw(`'{${column}}'`)}::pg_catalog.text[], 'null'::pg_catalog.jsonb, true)`;
+  }
   if (tableName !== 'mcp_servers') return tenantRewritten;
 
   // A catalog stamp proves that this deployment's marketplace install path
