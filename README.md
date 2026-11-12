@@ -1,3 +1,5 @@
+> **apiko-dev fork:** to build and run this fork without Docker, read [README.fork.md](README.fork.md).
+
 <img src="apps/agor-docs/public/logo-mark.svg" alt="Agor logo" width="92" height="92" />
 
 # Agor

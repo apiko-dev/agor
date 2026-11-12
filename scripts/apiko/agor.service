@@ -1,0 +1,22 @@
+# Copy to /etc/systemd/system/agor.service. Assumes a user named agor whose home is
+# /home/agor, setup.sh run as that user, Node installed system-wide (agor-daemon runs
+# through `env node`), and the env file at /etc/agor/agor.env (mode 600).
+[Unit]
+Description=Agor daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agor
+Group=agor
+WorkingDirectory=/home/agor
+Environment=HOME=/home/agor
+Environment=PATH=/home/agor/agor-runtime/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/etc/agor/agor.env
+ExecStart=/home/agor/agor-runtime/bin/agor-daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
