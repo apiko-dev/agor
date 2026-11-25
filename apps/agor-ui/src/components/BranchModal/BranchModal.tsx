@@ -21,6 +21,7 @@ import {
 import { useThemedMessage } from '../../utils/message';
 import { ActionErrorNotice, CompactNotice } from '../CompactNotice';
 import { DrillInFrame, useDiscardConfirm } from '../SettingsModal/SettingsDrill';
+import type { TeammateWebhookSaveAction } from '../TeammateWebhookForm';
 import { EnvironmentTab } from './tabs/EnvironmentTab';
 import { FilesTab } from './tabs/FilesTab';
 import { GeneralTab } from './tabs/GeneralTab';
@@ -123,6 +124,10 @@ export const BranchModal: React.FC<BranchModalProps> = ({
   const setWebhookDraft = useCallback((isDirty: (() => boolean) | null) => {
     draftRefs.current.webhooks = isDirty;
   }, []);
+  // An open webhook form saves through this modal's footer, not its own buttons.
+  const [webhookSaveAction, setWebhookSaveAction] = useState<TeammateWebhookSaveAction | null>(
+    null
+  );
   const dirtyDraftTab = (): DraftTab | null =>
     (Object.keys(draftRefs.current) as DraftTab[]).find((tab) => draftRefs.current[tab]?.()) ??
     null;
@@ -391,6 +396,7 @@ export const BranchModal: React.FC<BranchModalProps> = ({
                   onClose();
                 }}
                 onDraftChange={setWebhookDraft}
+                onSaveActionChange={setWebhookSaveAction}
               />
             ),
           },
@@ -421,7 +427,25 @@ export const BranchModal: React.FC<BranchModalProps> = ({
     !form.boardAttachError &&
     !form.boardAttachChecking;
 
-  const footer = (
+  // On the Webhooks tab with a webhook open, the footer's primary action
+  // saves that webhook; the branch form's own changes wait on their tabs.
+  const draftSave = activeTab === 'webhooks' ? webhookSaveAction : null;
+
+  const footer = draftSave ? (
+    <Space>
+      <Button onClick={onClose} disabled={draftSave.saving}>
+        Close
+      </Button>
+      <Button
+        type="primary"
+        onClick={draftSave.save}
+        loading={draftSave.saving}
+        disabled={draftSave.disabled}
+      >
+        {draftSave.label}
+      </Button>
+    </Space>
+  ) : (
     <Space>
       {form.hasChanges && (
         <Button
@@ -479,11 +503,12 @@ export const BranchModal: React.FC<BranchModalProps> = ({
       <DrillInFrame
         title={title}
         dirty={() => form.hasChanges || dirtyDraftTab() !== null}
-        saving={form.saving}
-        saveLabel="Save Changes"
-        onSave={canSave ? handleSave : undefined}
+        saving={draftSave ? draftSave.saving : form.saving}
+        saveLabel={draftSave ? draftSave.label : 'Save Changes'}
+        onSave={draftSave ? draftSave.save : canSave ? handleSave : undefined}
+        saveDisabled={draftSave?.disabled ?? false}
         extra={
-          form.hasChanges ? (
+          !draftSave && form.hasChanges ? (
             <Button
               onClick={() => {
                 setSaveError(null);

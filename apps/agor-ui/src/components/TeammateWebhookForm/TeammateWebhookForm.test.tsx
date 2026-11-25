@@ -2,9 +2,10 @@ import type { AgorClient, BranchID, TeammateWebhook } from '@agor-live/client';
 import { WORKSPACE_DEFAULT_AGENTIC_CONFIGURATION } from '@agor-live/client';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App as AntApp } from 'antd';
+import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeTeammateBranch } from '../BranchModal/testUtils';
-import { TeammateWebhookForm } from './TeammateWebhookForm';
+import { TeammateWebhookForm, type TeammateWebhookSaveAction } from './TeammateWebhookForm';
 
 const messageMocks = vi.hoisted(() => ({ showError: vi.fn(), showSuccess: vi.fn() }));
 vi.mock('../../utils/message', () => ({ useThemedMessage: () => messageMocks }));
@@ -66,16 +67,33 @@ function renderForm({
   onClose?: ReturnType<typeof vi.fn>;
 } = {}) {
   const client = { service: () => ({ create, patch }) } as unknown as AgorClient;
+  // Stands in for the branch editor, whose footer renders the form's save action.
+  const Host = () => {
+    const [action, setAction] = useState<TeammateWebhookSaveAction | null>(null);
+    return (
+      <>
+        <TeammateWebhookForm
+          onClose={onClose}
+          branch={makeTeammateBranch({ branch_id: BRANCH_ID, name: 'triage-bot' })}
+          webhook={webhook}
+          mcpServerById={new Map()}
+          client={client}
+          onSaved={onSaved}
+          onSaveActionChange={setAction}
+        />
+        {action && (
+          <footer>
+            <button type="button" onClick={action.save} disabled={action.disabled}>
+              {action.label}
+            </button>
+          </footer>
+        )}
+      </>
+    );
+  };
   render(
     <AntApp>
-      <TeammateWebhookForm
-        onClose={onClose}
-        branch={makeTeammateBranch({ branch_id: BRANCH_ID, name: 'triage-bot' })}
-        webhook={webhook}
-        mcpServerById={new Map()}
-        client={client}
-        onSaved={onSaved}
-      />
+      <Host />
     </AntApp>
   );
   return { create, patch, onSaved, onClose };
@@ -93,6 +111,14 @@ describe('TeammateWebhookForm', () => {
       'data-default-resolution',
       'webhook-run'
     );
+  });
+
+  it('leaves Save and Cancel to the host footer', async () => {
+    renderForm();
+    await screen.findByPlaceholderText('Jira triage');
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Create' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Create' }).closest('footer')).not.toBeNull();
   });
 
   it('rejects an unsafe template on the field and does not save', async () => {

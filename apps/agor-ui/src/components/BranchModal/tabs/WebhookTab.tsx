@@ -38,7 +38,11 @@ import { useThemedMessage } from '../../../utils/message';
 import { ActionErrorNotice } from '../../CompactNotice';
 import { ResponsiveTable } from '../../SettingsModal/ResponsiveTable';
 import { TeammateWebhookDeliveriesPanel } from '../../TeammateWebhookDeliveriesPanel';
-import { IssuedTokenPanel, TeammateWebhookForm } from '../../TeammateWebhookForm';
+import {
+  IssuedTokenPanel,
+  TeammateWebhookForm,
+  type TeammateWebhookSaveAction,
+} from '../../TeammateWebhookForm';
 
 const { Text } = Typography;
 
@@ -51,6 +55,8 @@ interface WebhookTabProps {
   onOpenSession?: (sessionId: string) => void;
   /** The open webhook form's dirty getter (null when closed), for the branch editor's leave guard. */
   onDraftChange?: (isDirty: (() => boolean) | null) => void;
+  /** The open webhook form's save action (null when closed), for the branch editor's footer. */
+  onSaveActionChange?: (action: TeammateWebhookSaveAction | null) => void;
 }
 
 /** What the tab shows in place: the list, the edit form, or a just-issued token (shown once). */
@@ -85,6 +91,7 @@ export const WebhookTab: React.FC<WebhookTabProps> = ({
   userById = new Map<string, DirectoryUser>(),
   onOpenSession,
   onDraftChange,
+  onSaveActionChange,
 }) => {
   const { showError, showSuccess } = useThemedMessage();
   const [webhooks, setWebhooks] = useState<TeammateWebhook[]>([]);
@@ -375,6 +382,7 @@ export const WebhookTab: React.FC<WebhookTabProps> = ({
           currentUser={currentUser}
           onSaved={handleSaved}
           onDraftChange={onDraftChange}
+          onSaveActionChange={onSaveActionChange}
         />
       </div>
     );
