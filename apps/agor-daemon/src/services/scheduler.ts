@@ -77,6 +77,7 @@ import type {
   TaskID,
   TenantID,
   User,
+  UserID,
   UUID,
 } from '@agor/core/types';
 import {
@@ -211,7 +212,8 @@ export class ScheduleNotReadyError extends Error {
     | 'schedule_permission_revoked'
     | 'schedule_initialization_retry_pending'
     | 'schedule_agentic_tool_removed'
-    | 'schedule_invalid_config';
+    | 'schedule_invalid_config'
+    | 'schedule_claude_reconnect_required';
   constructor(
     code:
       | 'schedule_disabled'
@@ -219,7 +221,8 @@ export class ScheduleNotReadyError extends Error {
       | 'schedule_permission_revoked'
       | 'schedule_initialization_retry_pending'
       | 'schedule_agentic_tool_removed'
-      | 'schedule_invalid_config',
+      | 'schedule_invalid_config'
+      | 'schedule_claude_reconnect_required',
     message: string
   ) {
     super(message);
@@ -299,6 +302,8 @@ export interface SchedulerConfig {
   random?: () => number;
   /** Diagnostic daemon instance/process identity. */
   workIdentity?: DistributedWorkIdentity;
+  /** True when the creator's backend Claude login needs a new sign-in before any run can work. */
+  claudeReconnectRequired?: (tenantId: string, userId: UserID) => Promise<boolean>;
   /** Deterministic crash injection used only by kill-point tests. */
   testHooks?: SchedulerTestHooks;
 }
@@ -326,6 +331,7 @@ interface ResolvedSchedulerConfig {
   jitterRatio: number;
   random: () => number;
   workIdentity: DistributedWorkIdentity;
+  claudeReconnectRequired?: (tenantId: string, userId: UserID) => Promise<boolean>;
   testHooks?: SchedulerTestHooks;
 }
 
@@ -379,6 +385,7 @@ export class SchedulerService {
       jitterRatio: config.jitterRatio ?? 0.2,
       random: config.random ?? Math.random,
       workIdentity,
+      claudeReconnectRequired: config.claudeReconnectRequired,
       testHooks: config.testHooks,
     };
     // The HA scheduler is a system-discovered, tenant-reentered workflow rather
@@ -773,6 +780,23 @@ export class SchedulerService {
     return session;
   }
 
+  /** Fails open: a check error must not block a run that may still succeed. */
+  private async creatorClaudeReconnectRequired(schedule: Schedule): Promise<boolean> {
+    if (!this.config.claudeReconnectRequired) return false;
+    try {
+      return await this.config.claudeReconnectRequired(
+        String(getCurrentTenantId()),
+        schedule.created_by as UserID
+      );
+    } catch (error) {
+      this.logWorkEvent('warn', 'claude_login_check_failed', {
+        schedule_id: schedule.schedule_id,
+        error_code: structuredLogErrorCode(error),
+      });
+      return false;
+    }
+  }
+
   /**
    * Map a launcher refusal to the error the scheduler has always raised. Cron
    * runs advance past a permission or configuration refusal so the schedule is
@@ -868,6 +892,20 @@ export class SchedulerService {
     // work performed while the schedule row is locked is existing/busy checks
     // and the session insert.
     const renderedPrompt = renderSchedulePrompt(schedule.prompt, branch, schedule, scheduledRunAt);
+    if (run.activeTool === 'claude-code' && (await this.creatorClaudeReconnectRequired(schedule))) {
+      if (manual) {
+        throw new ScheduleNotReadyError(
+          'schedule_claude_reconnect_required',
+          'Your Claude login needs to be reconnected. Reconnect Claude in Settings, then run this schedule again.'
+        );
+      }
+      this.logWorkEvent('info', 'occurrence_skipped_reconnect_required', {
+        schedule_id: schedule.schedule_id,
+        scheduled_run_at: scheduledRunAt,
+      });
+      await this.advanceScheduleCursor(schedule, now);
+      return null;
+    }
     const effectiveMcpIds = run.mcpServerIds;
     const candidateSessionId = generateId() as SessionID;
     const candidateTaskId = generateId() as TaskID;
