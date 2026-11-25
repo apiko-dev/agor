@@ -3542,6 +3542,7 @@ export function registerHooks(ctx: RegisterHooksContext): void {
                 }
                 await gatewayService.updateProgress({
                   session_id: session.session_id,
+                  task_id: terminalTaskId,
                   state: 'done',
                 });
               } catch (error) {
