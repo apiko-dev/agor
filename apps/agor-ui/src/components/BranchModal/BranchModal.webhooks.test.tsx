@@ -3,7 +3,7 @@
  * unsaved-changes guard like the schedule draft.
  */
 import type { AgorClient, Branch } from '@agor-live/client';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { StandaloneSettingsDrillProvider } from '../SettingsModal/SettingsDrill';
 import { BranchModal } from './BranchModal';
@@ -16,13 +16,34 @@ import {
   renderWithApp,
 } from './testUtils';
 
-vi.mock('../TeammateWebhookForm/TeammateWebhookForm', () => ({
-  TeammateWebhookForm: (props: { onDraftChange?: (isDirty: (() => boolean) | null) => void }) => (
-    <button type="button" onClick={() => props.onDraftChange?.(() => true)}>
-      Make webhook dirty
-    </button>
-  ),
-}));
+const webhookSave = vi.hoisted(() => vi.fn());
+vi.mock('../TeammateWebhookForm/TeammateWebhookForm', async () => {
+  const { useEffect } = await import('react');
+  return {
+    TeammateWebhookForm: (props: {
+      onDraftChange?: (isDirty: (() => boolean) | null) => void;
+      onSaveActionChange?: (
+        action: { label: string; save: () => void; saving: boolean; disabled: boolean } | null
+      ) => void;
+    }) => {
+      const { onSaveActionChange } = props;
+      useEffect(() => {
+        onSaveActionChange?.({
+          label: 'Create',
+          save: webhookSave,
+          saving: false,
+          disabled: false,
+        });
+        return () => onSaveActionChange?.(null);
+      }, [onSaveActionChange]);
+      return (
+        <button type="button" onClick={() => props.onDraftChange?.(() => true)}>
+          Make webhook dirty
+        </button>
+      );
+    },
+  };
+});
 
 const withRealtime = (client: AgorClient) =>
   ({
@@ -85,5 +106,48 @@ describe('BranchModal webhooks', () => {
 
     fireEvent.click(screen.getByText('Branches'));
     await waitFor(() => expect(confirms()).toBe(1));
+  });
+
+  it('saves an open webhook from the modal footer', async () => {
+    webhookSave.mockClear();
+    const teammate = makeTeammateBranch({ created_by: owner.user_id });
+    renderWithApp(
+      <BranchModal
+        open
+        onClose={vi.fn()}
+        branch={teammate}
+        repo={makeRepo()}
+        sessions={[]}
+        client={withRealtime(makeStubClient({ owners: [owner], users: [owner] }).client)}
+        currentUser={owner}
+        defaultTab="webhooks"
+      />
+    );
+    fireEvent.click((await screen.findAllByRole('button', { name: /New( webhook)?$/ }))[0]);
+
+    // jsdom has no breakpoints, so the standalone editor renders as its bottom sheet.
+    const footer = () =>
+      document.querySelector('.ant-modal-footer, .ant-drawer-footer') as HTMLElement;
+    await waitFor(() =>
+      expect(within(footer()).getByRole('button', { name: 'Create' })).toBeEnabled()
+    );
+    expect(
+      within(footer()).queryByRole('button', { name: 'Save changes' })
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(footer()).getByRole('button', { name: 'Create' }));
+    expect(webhookSave).toHaveBeenCalledOnce();
+  });
+
+  it('saves an open webhook from the Settings drill-in footer', async () => {
+    webhookSave.mockClear();
+    renderWithApp(
+      <StandaloneSettingsDrillProvider section="branches">
+        {branchModal(makeTeammateBranch({ created_by: owner.user_id }), 'webhooks')}
+      </StandaloneSettingsDrillProvider>
+    );
+    fireEvent.click((await screen.findAllByRole('button', { name: /New( webhook)?$/ }))[0]);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Create' }));
+    expect(webhookSave).toHaveBeenCalledOnce();
   });
 });
