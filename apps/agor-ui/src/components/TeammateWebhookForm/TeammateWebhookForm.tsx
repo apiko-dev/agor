@@ -16,18 +16,7 @@ import type {
 } from '@agor-live/client';
 import { isActiveScheduleAgenticToolConfig, TEAMMATE_WEBHOOKS_SERVICE } from '@agor-live/client';
 import { DownOutlined } from '@ant-design/icons';
-import {
-  Alert,
-  Button,
-  Collapse,
-  Form,
-  Input,
-  Radio,
-  Space,
-  Switch,
-  Typography,
-  theme,
-} from 'antd';
+import { Alert, Collapse, Form, Input, Radio, Space, Switch, Typography, theme } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   type ActionErrorCopy,
@@ -70,8 +59,16 @@ const SAMPLE_PAYLOAD = JSON.stringify(
   2
 );
 
+/** The form's primary action, rendered by the host's footer instead of inside the form. */
+export interface TeammateWebhookSaveAction {
+  label: string;
+  save: () => void;
+  saving: boolean;
+  disabled: boolean;
+}
+
 export interface TeammateWebhookFormProps {
-  /** Leaves the form: after Cancel (once a dirty draft is confirmed) or a save. */
+  /** Leaves the form: after a save, or from the breadcrumb once a dirty draft is confirmed. */
   onClose: () => void;
   /** The teammate branch the webhook belongs to. */
   branch: Branch;
@@ -87,6 +84,8 @@ export interface TeammateWebhookFormProps {
   onSaved?: (webhook: TeammateWebhook, created: boolean) => void;
   /** Hands up the draft's dirty getter while open (null on unmount) for an outer leave guard. */
   onDraftChange?: (isDirty: (() => boolean) | null) => void;
+  /** Hands up the save action while open (null on unmount) for the host's footer. */
+  onSaveActionChange?: (action: TeammateWebhookSaveAction | null) => void;
 }
 
 interface WebhookFormValues extends AutomationAgenticFormValues {
@@ -222,6 +221,7 @@ export const TeammateWebhookForm: React.FC<TeammateWebhookFormProps> = ({
   currentUser,
   onSaved,
   onDraftChange,
+  onSaveActionChange,
 }) => {
   const isEditing = Boolean(webhook?.webhook_id);
   const { showSuccess } = useThemedMessage();
@@ -370,6 +370,21 @@ export const TeammateWebhookForm: React.FC<TeammateWebhookFormProps> = ({
     }
   };
 
+  // The ref keeps the handed-up action stable while handleSave changes every render.
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+  const saveLabel = isEditing ? 'Save' : 'Create';
+  const saveDisabled = requiresSupportedToolSelection || createUnconfirmed;
+  useEffect(() => {
+    onSaveActionChange?.({
+      label: saveLabel,
+      save: () => void handleSaveRef.current(),
+      saving,
+      disabled: saveDisabled,
+    });
+  }, [onSaveActionChange, saveLabel, saving, saveDisabled]);
+  useEffect(() => () => onSaveActionChange?.(null), [onSaveActionChange]);
+
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
@@ -513,19 +528,6 @@ export const TeammateWebhookForm: React.FC<TeammateWebhookFormProps> = ({
           </div>
         )}
       </Form>
-      <Space style={{ width: '100%', justifyContent: 'flex-end', marginTop: 16 }}>
-        <Button onClick={leave} disabled={saving}>
-          Cancel
-        </Button>
-        <Button
-          type="primary"
-          loading={saving}
-          disabled={requiresSupportedToolSelection || createUnconfirmed}
-          onClick={handleSave}
-        >
-          {isEditing ? 'Save' : 'Create'}
-        </Button>
-      </Space>
     </div>
   );
 };
